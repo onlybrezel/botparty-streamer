@@ -3,6 +3,7 @@ package main
 import (
 "context"
 "errors"
+"fmt"
 "io"
 "log"
 "math"
@@ -12,6 +13,9 @@ import (
 "sync/atomic"
 "time"
 )
+
+// version is set at build time via -ldflags "-X main.version=vX.Y.Z".
+var version = "dev"
 
 type runtimeStats struct {
 droppedQueue          uint64
@@ -30,6 +34,11 @@ atomic.StoreInt64(&s.lastKeyframeUnixNanos, t.UnixNano())
 }
 
 func main() {
+if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+fmt.Println(version)
+os.Exit(0)
+}
+
 logger := log.New(os.Stdout, "botparty-streamer ", log.LstdFlags|log.Lmicroseconds)
 
 cfg, err := LoadConfig()
