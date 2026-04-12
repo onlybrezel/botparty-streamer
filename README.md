@@ -1,4 +1,4 @@
-# lk-h264-publisher
+# botparty-streamer
 
 Kleines, plattformneutrales Go-Tool, das bereits H.264-encodiertes Annex-B Video von ffmpeg per TCP annimmt und als normaler LiveKit Participant published.
 
@@ -19,7 +19,7 @@ Kleines, plattformneutrales Go-Tool, das bereits H.264-encodiertes Annex-B Video
 Klare Trennung:
 
 - ffmpeg = Encoder
-- lk-h264-publisher = LiveKit Publisher
+- botparty-streamer = LiveKit Publisher
 - Backend = Token-Aussteller
 
 ## Was gegenüber dem Prototyp gehärtet wurde
@@ -65,10 +65,11 @@ Klare Trennung:
 ├── signals_windows.go
 ├── .env.example
 ├── scripts/
+│   ├── install-botparty-streamer.sh
 │   └── fetch_token.sh
 ├── deploy/
 │   └── systemd/
-│       ├── lk-h264-publisher.service
+│       ├── botparty-streamer.service
 │       └── ffmpeg-h264-feed.service
 └── examples/
     └── token-backend-node/
@@ -83,23 +84,42 @@ Voraussetzung: Go 1.22+
 
 ```bash
 go mod tidy
-go build -o bin/lk-h264-publisher .
+go build -o bin/botparty-streamer .
+```
+
+Build + systemweite Installation in einem Schritt:
+
+```bash
+./scripts/install-botparty-streamer.sh
+```
+
+Gezielte Linux Builds ueber das Skript:
+
+```bash
+# Nur Linux AMD64 bauen
+./scripts/install-botparty-streamer.sh --arch amd64 --no-install
+
+# Nur Linux ARM64 bauen (Raspberry Pi 64-bit)
+./scripts/install-botparty-streamer.sh --arch arm64 --no-install
+
+# Beide Linux Release-Binaries auf einmal bauen
+./scripts/install-botparty-streamer.sh --arch all --no-install
 ```
 
 Cross-Build Beispiele:
 
 ```bash
 # Linux x86_64
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/lk-h264-publisher-linux-amd64 .
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-linux-amd64 .
 
 # Linux ARM64 (z.B. Raspberry Pi OS 64-bit)
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/lk-h264-publisher-linux-arm64 .
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-linux-arm64 .
 
 # macOS Apple Silicon
-GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o bin/lk-h264-publisher-darwin-arm64 .
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-darwin-arm64 .
 
 # Windows x86_64
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o bin/lk-h264-publisher-windows-amd64.exe .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-windows-amd64.exe .
 ```
 
 Hinweis zur Cross-Platform Aussage:
@@ -149,7 +169,7 @@ Publisher starten (mit env):
 set -a
 source .env
 set +a
-./bin/lk-h264-publisher
+./bin/botparty-streamer
 ```
 
 Optionales Token-Fetch Skript:
@@ -162,7 +182,7 @@ set +a
 set -a
 source /tmp/lk-token.env
 set +a
-./bin/lk-h264-publisher
+./bin/botparty-streamer
 ```
 
 ## ffmpeg Beispiele (kein Re-Encode im Go-Tool)
@@ -229,7 +249,7 @@ AMF/QSV/Software sind analog austauschbar, solange Ausgang H.264 Annex-B bleibt.
 
 Publisher Unit:
 
-- `deploy/systemd/lk-h264-publisher.service`
+- `deploy/systemd/botparty-streamer.service`
 
 FFmpeg Feed Unit:
 
@@ -238,12 +258,12 @@ FFmpeg Feed Unit:
 Installationsbeispiel:
 
 ```bash
-sudo install -m 0755 bin/lk-h264-publisher /usr/local/bin/lk-h264-publisher
-sudo install -m 0644 deploy/systemd/lk-h264-publisher.service /etc/systemd/system/lk-h264-publisher.service
+./scripts/install-botparty-streamer.sh
+sudo install -m 0644 deploy/systemd/botparty-streamer.service /etc/systemd/system/botparty-streamer.service
 sudo install -m 0644 deploy/systemd/ffmpeg-h264-feed.service /etc/systemd/system/ffmpeg-h264-feed.service
 ```
 
-Beispiel `/etc/default/lk-h264-publisher`:
+Beispiel `/etc/default/botparty-streamer`:
 
 ```bash
 LK_URL=wss://livekit.example.com
@@ -276,7 +296,7 @@ Aktivieren:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now lk-h264-publisher.service
+sudo systemctl enable --now botparty-streamer.service
 sudo systemctl enable --now ffmpeg-h264-feed.service
 ```
 

@@ -30,7 +30,7 @@ atomic.StoreInt64(&s.lastKeyframeUnixNanos, t.UnixNano())
 }
 
 func main() {
-logger := log.New(os.Stdout, "lk-h264-publisher ", log.LstdFlags|log.Lmicroseconds)
+logger := log.New(os.Stdout, "botparty-streamer ", log.LstdFlags|log.Lmicroseconds)
 
 cfg, err := LoadConfig()
 if err != nil {

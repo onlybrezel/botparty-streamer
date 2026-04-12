@@ -1,7 +1,7 @@
 [Unit]
-Description=FFmpeg H264 Feed for lk-h264-publisher
-After=network-online.target lk-h264-publisher.service
-Wants=network-online.target lk-h264-publisher.service
+Description=FFmpeg H264 Feed for botparty-streamer
+After=network-online.target botparty-streamer.service
+Wants=network-online.target botparty-streamer.service
 
 [Service]
 Type=simple

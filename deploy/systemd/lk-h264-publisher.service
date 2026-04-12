@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/default/lk-h264-publisher
+EnvironmentFile=/etc/default/botparty-streamer
 WorkingDirectory=/opt/botparty-streamer
-ExecStart=/usr/local/bin/lk-h264-publisher
+ExecStart=/usr/local/bin/botparty-streamer
 Restart=always
 RestartSec=1
 User=botparty
