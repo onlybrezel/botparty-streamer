@@ -1,7 +1,6 @@
 package main
 
 import (
-"context"
 "fmt"
 "log"
 "sync"
@@ -19,7 +18,7 @@ disconnected chan struct{}
 once         sync.Once
 }
 
-func ConnectLiveKit(ctx context.Context, cfg Config, token string, logger *log.Logger) (*LiveKitSession, error) {
+func ConnectLiveKit(cfg Config, token string, logger *log.Logger) (*LiveKitSession, error) {
 disconnected := make(chan struct{})
 var disconnectedOnce sync.Once
 cb := &lksdk.RoomCallback{
@@ -60,11 +59,6 @@ return nil, fmt.Errorf("publish track: %w", err)
 logger.Printf("livekit connected: room=%s identity=%s track=%s", cfg.RoomName, cfg.Identity, cfg.TrackName)
 
 session := &LiveKitSession{Room: room, Track: track, disconnected: disconnected}
-
-go func() {
-<-ctx.Done()
-session.Close()
-}()
 
 return session, nil
 }

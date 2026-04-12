@@ -84,7 +84,7 @@ waitOrDone(ctx, backoff)
 continue
 }
 
-session, err := ConnectLiveKit(ctx, cfg, token, logger)
+session, err := ConnectLiveKit(cfg, token, logger)
 if err != nil {
 attempt++
 backoff := reconnectBackoff(cfg.ReconnectMin, cfg.ReconnectMax, attempt)

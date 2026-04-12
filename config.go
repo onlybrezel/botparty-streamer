@@ -3,6 +3,7 @@ package main
 import (
 "errors"
 "fmt"
+"net"
 "os"
 "strconv"
 "strings"
@@ -25,6 +26,7 @@ MaxPublishStale  time.Duration
 AUMaxNALUs       int
 AUMaxBytes       int
 MetricsInterval  time.Duration
+AllowRemoteInput bool
 
 StaticToken string
 
@@ -49,13 +51,14 @@ TrackName:       getenvDefault("LK_TRACK_NAME", "camera"),
 
 InputListenAddr: getenvDefault("INPUT_LISTEN_ADDR", "127.0.0.1:5004"),
 FPS:             getenvInt("VIDEO_FPS", 30),
-ReadTimeout:     getenvDurationMs("INPUT_READ_TIMEOUT_MS", 1200),
-FlushTimeout:    getenvDurationMs("FRAME_FLUSH_TIMEOUT_MS", 80),
+ReadTimeout:     getenvDurationMs("INPUT_READ_TIMEOUT_MS", 500),
+FlushTimeout:    getenvDurationMs("FRAME_FLUSH_TIMEOUT_MS", 50),
 FrameChanSize:   getenvInt("FRAME_CHAN_SIZE", 4),
 MaxPublishStale: getenvDurationMs("MAX_PUBLISH_STALE_MS", 250),
 AUMaxNALUs:      getenvInt("AU_MAX_NALUS", 64),
 AUMaxBytes:      getenvInt("AU_MAX_BYTES", 2097152),
-MetricsInterval: getenvDurationMs("METRICS_INTERVAL_MS", 5000),
+MetricsInterval:  getenvDurationMs("METRICS_INTERVAL_MS", 5000),
+AllowRemoteInput: getenvBool("ALLOW_REMOTE_INPUT", false),
 
 StaticToken:      strings.TrimSpace(os.Getenv("LK_TOKEN")),
 TokenEndpoint:    strings.TrimSpace(os.Getenv("TOKEN_ENDPOINT")),
@@ -105,6 +108,14 @@ if cfg.ReconnectMin > cfg.ReconnectMax {
 return cfg, errors.New("RECONNECT_MIN_MS must be <= RECONNECT_MAX_MS")
 }
 
+host, _, err := net.SplitHostPort(cfg.InputListenAddr)
+if err != nil {
+return cfg, fmt.Errorf("INPUT_LISTEN_ADDR must be host:port, got %q", cfg.InputListenAddr)
+}
+if !cfg.AllowRemoteInput && !isLoopbackHost(host) {
+return cfg, fmt.Errorf("INPUT_LISTEN_ADDR=%q is not loopback; set ALLOW_REMOTE_INPUT=true to allow external binding", cfg.InputListenAddr)
+}
+
 if cfg.StaticToken == "" && cfg.TokenEndpoint == "" {
 return cfg, errors.New("either LK_TOKEN or TOKEN_ENDPOINT must be set")
 }
@@ -142,4 +153,31 @@ if err != nil {
 return time.Duration(fallbackMs) * time.Millisecond
 }
 return time.Duration(i) * time.Millisecond
+}
+
+func getenvBool(key string, fallback bool) bool {
+v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+if v == "" {
+return fallback
+}
+switch v {
+case "1", "true", "yes", "on":
+return true
+case "0", "false", "no", "off":
+return false
+default:
+return fallback
+}
+}
+
+func isLoopbackHost(host string) bool {
+h := strings.Trim(host, "[]")
+if h == "localhost" {
+return true
+}
+ip := net.ParseIP(h)
+if ip == nil {
+return false
+}
+return ip.IsLoopback()
 }

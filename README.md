@@ -34,9 +34,14 @@ Klare Trennung:
   - sehr kleine Queue (`FRAME_CHAN_SIZE` Default `4`)
   - strict latest-frame / drop-oldest
   - Publish-Drop für veraltete Frames (`MAX_PUBLISH_STALE_MS`).
+- Reader/Flush-Timeouts enger gesetzt:
+  - `INPUT_READ_TIMEOUT_MS=500`
+  - `FRAME_FLUSH_TIMEOUT_MS=50`
 - Reconnect-Rebase:
   - Queue wird bei Session-Neustart geleert
   - Publish wartet erneut auf Keyframe.
+- Session-Close-Pfad bereinigt:
+  - kein pro-Session Hintergrund-Goroutine-Wait auf globales Shutdown-Signal mehr.
 - Laufzeitmetriken im Log:
   - queue depth
   - dropped frames (queue/stale/wait keyframe)
@@ -115,6 +120,14 @@ Wichtige Low-Latency Parameter:
 - `MAX_PUBLISH_STALE_MS=250` (alte Frames verwerfen)
 - `AU_MAX_NALUS=64`
 - `AU_MAX_BYTES=2097152`
+- `INPUT_READ_TIMEOUT_MS=500`
+- `FRAME_FLUSH_TIMEOUT_MS=50`
+
+Input-Bind-Schutz:
+
+- Standard ist Loopback-only (`INPUT_LISTEN_ADDR=127.0.0.1:5004`).
+- Nicht-Loopback Binding wird standardmaessig abgewiesen.
+- Fuer bewusstes externes Binding muss `ALLOW_REMOTE_INPUT=true` gesetzt werden.
 
 Empfohlen: Token über Backend beziehen (ohne API-Key/Secret auf Gerät):
 
@@ -240,6 +253,9 @@ LK_NAME=Robot Streamer 1
 LK_TRACK_NAME=camera
 INPUT_LISTEN_ADDR=127.0.0.1:5004
 VIDEO_FPS=30
+INPUT_READ_TIMEOUT_MS=500
+FRAME_FLUSH_TIMEOUT_MS=50
+ALLOW_REMOTE_INPUT=false
 FRAME_CHAN_SIZE=4
 MAX_PUBLISH_STALE_MS=250
 AU_MAX_NALUS=64
