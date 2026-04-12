@@ -97,23 +97,23 @@ Gezielte Linux Builds ueber das Skript:
 
 ```bash
 # Nur Linux AMD64 bauen
-./scripts/install-botparty-streamer.sh --arch amd64 --no-install
+./scripts/install-botparty-streamer.sh --arch amd64 --version v0.1.0 --no-install
 
 # Nur Linux ARM64 bauen (Raspberry Pi 64-bit)
-./scripts/install-botparty-streamer.sh --arch arm64 --no-install
+./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.0 --no-install
 
 # Beide Linux Release-Binaries auf einmal bauen
-./scripts/install-botparty-streamer.sh --arch all --no-install
+./scripts/install-botparty-streamer.sh --arch all --version v0.1.0 --no-install
 ```
 
 Cross-Build Beispiele:
 
 ```bash
 # Linux x86_64
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-linux-amd64 .
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-v0.1.0-linux-amd64 .
 
 # Linux ARM64 (z.B. Raspberry Pi OS 64-bit)
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-linux-arm64 .
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-v0.1.0-linux-arm64 .
 
 # macOS Apple Silicon
 GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-darwin-arm64 .

@@ -64,7 +64,7 @@ return session, nil
 }
 
 func (s *LiveKitSession) WriteFrame(frame EncodedFrame) error {
-return s.Track.WriteSample(media.Sample{Data: frame.Data, Duration: frame.Duration})
+return s.Track.WriteSample(media.Sample{Data: frame.Data, Duration: frame.Duration}, nil)
 }
 
 func (s *LiveKitSession) Disconnected() <-chan struct{} {

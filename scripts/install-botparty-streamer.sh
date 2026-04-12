@@ -4,10 +4,11 @@ set -euo pipefail
 TARGET="/usr/local/bin/botparty-streamer"
 ARCH="native"
 INSTALL="true"
+VERSION="v0.1.0"
 
 usage() {
   cat >&2 <<'EOF'
-usage: install-botparty-streamer.sh [--arch native|amd64|arm64|all] [--no-install]
+usage: install-botparty-streamer.sh [--arch native|amd64|arm64|all] [--version v0.1.0] [--no-install]
 
 Defaults:
   --arch native
@@ -15,9 +16,9 @@ Defaults:
 
 Examples:
   ./scripts/install-botparty-streamer.sh
-  ./scripts/install-botparty-streamer.sh --arch amd64 --no-install
-  ./scripts/install-botparty-streamer.sh --arch arm64 --no-install
-  ./scripts/install-botparty-streamer.sh --arch all --no-install
+  ./scripts/install-botparty-streamer.sh --arch amd64 --version v0.1.0 --no-install
+  ./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.0 --no-install
+  ./scripts/install-botparty-streamer.sh --arch all --version v0.1.0 --no-install
 EOF
 }
 
@@ -25,6 +26,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --arch)
       ARCH="${2:-}"
+      shift 2
+      ;;
+    --version)
+      VERSION="${2:-}"
       shift 2
       ;;
     --no-install)
@@ -64,11 +69,11 @@ build_native() {
 }
 
 build_linux_amd64() {
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/botparty-streamer-linux-amd64 .
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "bin/botparty-streamer-${VERSION}-linux-amd64" .
 }
 
 build_linux_arm64() {
-  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/botparty-streamer-linux-arm64 .
+  CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "bin/botparty-streamer-${VERSION}-linux-arm64" .
 }
 
 case "$ARCH" in
