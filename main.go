@@ -9,9 +9,25 @@ import (
 "net"
 "os"
 "os/signal"
-"syscall"
+"sync/atomic"
 "time"
 )
+
+type runtimeStats struct {
+droppedQueue          uint64
+droppedStale          uint64
+droppedWaitKeyframe   uint64
+publishedFrames       uint64
+parseErrors           uint64
+connectAttempts       uint64
+reconnects            uint64
+inputConnections      uint64
+lastKeyframeUnixNanos int64
+}
+
+func (s *runtimeStats) markKeyframe(t time.Time) {
+atomic.StoreInt64(&s.lastKeyframeUnixNanos, t.UnixNano())
+}
 
 func main() {
 logger := log.New(os.Stdout, "lk-h264-publisher ", log.LstdFlags|log.Lmicroseconds)
@@ -40,19 +56,25 @@ Timeout:      cfg.TokenTimeout,
 logger.Printf("using token endpoint: %s", cfg.TokenEndpoint)
 }
 
-ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+ctx, cancel := signal.NotifyContext(context.Background(), shutdownSignals()...)
 defer cancel()
 
-	frameCh := make(chan EncodedFrame, cfg.FrameChanSize)
-go runInputServer(ctx, cfg, frameCh, logger)
+stats := &runtimeStats{}
+frameCh := make(chan EncodedFrame, cfg.FrameChanSize)
+
+go runInputServer(ctx, cfg, frameCh, stats, logger)
+go runMetricsLogger(ctx, cfg, frameCh, stats, logger)
 
 attempt := 0
+waitForKeyframe := true
+
 for {
 if ctx.Err() != nil {
 logger.Printf("shutdown requested")
 return
 }
 
+atomic.AddUint64(&stats.connectAttempts, 1)
 token, err := provider.Fetch(ctx)
 if err != nil {
 attempt++
@@ -72,17 +94,24 @@ continue
 }
 
 attempt = 0
-err = pumpFrames(ctx, frameCh, session, logger)
+drained := drainFrameQueue(frameCh)
+if drained > 0 {
+logger.Printf("drained %d stale frames before publish resume", drained)
+}
+
+err = pumpFrames(ctx, frameCh, session, cfg, waitForKeyframe, stats, logger)
 session.Close()
 if err != nil && !errors.Is(err, context.Canceled) {
 logger.Printf("session ended: %v", err)
 }
 
+waitForKeyframe = true
+atomic.AddUint64(&stats.reconnects, 1)
 waitOrDone(ctx, cfg.ReconnectMin)
 }
 }
 
-func runInputServer(ctx context.Context, cfg Config, frameCh chan EncodedFrame, logger *log.Logger) {
+func runInputServer(ctx context.Context, cfg Config, frameCh chan EncodedFrame, stats *runtimeStats, logger *log.Logger) {
 ln, err := net.Listen("tcp", cfg.InputListenAddr)
 if err != nil {
 logger.Fatalf("failed to listen on %s: %v", cfg.InputListenAddr, err)
@@ -93,8 +122,9 @@ logger.Printf("waiting for ffmpeg h264 input on tcp://%s", cfg.InputListenAddr)
 
 for {
 if tcpLn, ok := ln.(*net.TCPListener); ok {
-tcpLn.SetDeadline(time.Now().Add(1 * time.Second))
+_ = tcpLn.SetDeadline(time.Now().Add(1 * time.Second))
 }
+
 conn, err := ln.Accept()
 if err != nil {
 if ne, ok := err.(net.Error); ok && ne.Timeout() {
@@ -110,17 +140,18 @@ logger.Printf("accept failed: %v", err)
 continue
 }
 
+atomic.AddUint64(&stats.inputConnections, 1)
 logger.Printf("ffmpeg connected from %s", conn.RemoteAddr())
-handleInputConnection(ctx, conn, cfg, frameCh, logger)
+handleInputConnection(ctx, conn, cfg, frameCh, stats, logger)
 logger.Printf("ffmpeg disconnected")
 }
 }
 
-func handleInputConnection(ctx context.Context, conn net.Conn, cfg Config, frameCh chan EncodedFrame, logger *log.Logger) {
+func handleInputConnection(ctx context.Context, conn net.Conn, cfg Config, frameCh chan EncodedFrame, stats *runtimeStats, logger *log.Logger) {
 defer conn.Close()
 
 reader := NewAnnexBReader(conn)
-assembler := NewAccessUnitAssembler()
+assembler := NewAccessUnitAssembler(cfg.AUMaxNALUs, cfg.AUMaxBytes)
 frameDuration := time.Second / time.Duration(cfg.FPS)
 
 for {
@@ -132,44 +163,79 @@ _ = conn.SetReadDeadline(time.Now().Add(cfg.ReadTimeout))
 nalu, err := reader.NextNALU()
 if err != nil {
 if ne, ok := err.(net.Error); ok && ne.Timeout() {
-if frame, key, ok := assembler.FlushIfStale(cfg.FlushTimeout); ok {
-sendFrame(frameCh, EncodedFrame{Data: frame, Duration: frameDuration, KeyFrame: key, CreatedAt: time.Now()}, logger)
+if frame, key, ok, reason := assembler.FlushIfStale(cfg.FlushTimeout); ok {
+sendFrame(frameCh, EncodedFrame{Data: frame, Duration: frameDuration, KeyFrame: key, CreatedAt: time.Now()}, stats)
+if key {
+stats.markKeyframe(time.Now())
+}
+logger.Printf("flushed access unit reason=%s bytes=%d key=%v", reason, len(frame), key)
 }
 continue
 }
 if errors.Is(err, io.EOF) {
-if frame, key, ok := assembler.FlushFinal(); ok {
-sendFrame(frameCh, EncodedFrame{Data: frame, Duration: frameDuration, KeyFrame: key, CreatedAt: time.Now()}, logger)
+if frame, key, ok, reason := assembler.FlushFinal(); ok {
+sendFrame(frameCh, EncodedFrame{Data: frame, Duration: frameDuration, KeyFrame: key, CreatedAt: time.Now()}, stats)
+if key {
+stats.markKeyframe(time.Now())
+}
+logger.Printf("flushed access unit reason=%s bytes=%d key=%v", reason, len(frame), key)
 }
 return
 }
+atomic.AddUint64(&stats.parseErrors, 1)
 logger.Printf("input parse error: %v", err)
 return
 }
 
-if frame, key, ok := assembler.Push(nalu); ok {
-sendFrame(frameCh, EncodedFrame{Data: frame, Duration: frameDuration, KeyFrame: key, CreatedAt: time.Now()}, logger)
+if frame, key, ok, reason := assembler.Push(nalu); ok {
+sendFrame(frameCh, EncodedFrame{Data: frame, Duration: frameDuration, KeyFrame: key, CreatedAt: time.Now()}, stats)
+if key {
+stats.markKeyframe(time.Now())
+}
+if reason == "max_au_bytes" || reason == "max_au_nalus" || reason == "uncertain_slice_boundary" {
+logger.Printf("guard flush reason=%s bytes=%d key=%v", reason, len(frame), key)
+}
 }
 }
 }
 
-func sendFrame(frameCh chan EncodedFrame, frame EncodedFrame, logger *log.Logger) {
+func sendFrame(frameCh chan EncodedFrame, frame EncodedFrame, stats *runtimeStats) {
+for {
 select {
 case frameCh <- frame:
+return
 default:
+}
+
 select {
 case <-frameCh:
+atomic.AddUint64(&stats.droppedQueue, 1)
 default:
 }
-select {
-case frameCh <- frame:
-default:
-}
-logger.Printf("frame queue full, dropping old frame")
 }
 }
 
-func pumpFrames(ctx context.Context, frameCh <-chan EncodedFrame, session *LiveKitSession, logger *log.Logger) error {
+func drainFrameQueue(frameCh chan EncodedFrame) int {
+drained := 0
+for {
+select {
+case <-frameCh:
+drained++
+default:
+return drained
+}
+}
+}
+
+func pumpFrames(
+ctx context.Context,
+frameCh <-chan EncodedFrame,
+session *LiveKitSession,
+cfg Config,
+waitForKeyframe bool,
+stats *runtimeStats,
+logger *log.Logger,
+) error {
 for {
 select {
 case <-ctx.Done():
@@ -180,10 +246,60 @@ case frame := <-frameCh:
 if len(frame.Data) == 0 {
 continue
 }
+
+if cfg.MaxPublishStale > 0 {
+age := time.Since(frame.CreatedAt)
+if age > cfg.MaxPublishStale {
+atomic.AddUint64(&stats.droppedStale, 1)
+continue
+}
+}
+
+if waitForKeyframe && !frame.KeyFrame {
+atomic.AddUint64(&stats.droppedWaitKeyframe, 1)
+continue
+}
+if frame.KeyFrame {
+waitForKeyframe = false
+stats.markKeyframe(time.Now())
+}
+
 if err := session.WriteFrame(frame); err != nil {
 logger.Printf("write frame failed: %v", err)
 return err
 }
+atomic.AddUint64(&stats.publishedFrames, 1)
+}
+}
+}
+
+func runMetricsLogger(ctx context.Context, cfg Config, frameCh <-chan EncodedFrame, stats *runtimeStats, logger *log.Logger) {
+ticker := time.NewTicker(cfg.MetricsInterval)
+defer ticker.Stop()
+
+for {
+select {
+case <-ctx.Done():
+return
+case <-ticker.C:
+lastKF := atomic.LoadInt64(&stats.lastKeyframeUnixNanos)
+lastKFStr := "never"
+if lastKF > 0 {
+lastKFStr = time.Since(time.Unix(0, lastKF)).Round(time.Millisecond).String() + " ago"
+}
+logger.Printf(
+"metrics queue_depth=%d dropped_queue=%d dropped_stale=%d dropped_wait_keyframe=%d published=%d parse_errors=%d connect_attempts=%d reconnects=%d input_connections=%d last_keyframe=%s",
+len(frameCh),
+atomic.LoadUint64(&stats.droppedQueue),
+atomic.LoadUint64(&stats.droppedStale),
+atomic.LoadUint64(&stats.droppedWaitKeyframe),
+atomic.LoadUint64(&stats.publishedFrames),
+atomic.LoadUint64(&stats.parseErrors),
+atomic.LoadUint64(&stats.connectAttempts),
+atomic.LoadUint64(&stats.reconnects),
+atomic.LoadUint64(&stats.inputConnections),
+lastKFStr,
+)
 }
 }
 }

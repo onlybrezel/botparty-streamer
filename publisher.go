@@ -5,7 +5,6 @@ import (
 "fmt"
 "log"
 "sync"
-"time"
 
 "github.com/livekit/protocol/livekit"
 lksdk "github.com/livekit/server-sdk-go/v2"
@@ -22,13 +21,19 @@ once         sync.Once
 
 func ConnectLiveKit(ctx context.Context, cfg Config, token string, logger *log.Logger) (*LiveKitSession, error) {
 disconnected := make(chan struct{})
-	var disconnectedOnce sync.Once
+var disconnectedOnce sync.Once
 cb := &lksdk.RoomCallback{
 OnDisconnected: func() {
 logger.Printf("livekit disconnected")
-			disconnectedOnce.Do(func() {
-				close(disconnected)
-			})
+disconnectedOnce.Do(func() {
+close(disconnected)
+})
+},
+OnDisconnectedWithReason: func(reason lksdk.DisconnectionReason) {
+logger.Printf("livekit disconnected reason=%s", reason)
+disconnectedOnce.Do(func() {
+close(disconnected)
+})
 },
 }
 
@@ -75,7 +80,6 @@ return s.disconnected
 func (s *LiveKitSession) Close() {
 s.once.Do(func() {
 if s.Room != nil {
-time.Sleep(30 * time.Millisecond)
 s.Room.Disconnect()
 }
 })

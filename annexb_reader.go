@@ -1,7 +1,6 @@
 package main
 
 import (
-"bytes"
 "errors"
 "fmt"
 "io"
@@ -28,28 +27,34 @@ return &AnnexBReader{r: r, buf: make([]byte, 0, 64*1024)}
 func (r *AnnexBReader) NextNALU() ([]byte, error) {
 for {
 startIdx, startLen := findStartCode(r.buf, 0)
+if startIdx > 0 {
+// Keep parser aligned by dropping bytes before the first start code.
+r.buf = append(r.buf[:0], r.buf[startIdx:]...)
+startIdx = 0
+}
+
 if startIdx >= 0 {
-nextStartIdx, _ := findStartCode(r.buf, startIdx+startLen)
+nextStartIdx, _ := findStartCode(r.buf, startLen)
 if nextStartIdx >= 0 {
-nalu := bytes.Trim(r.buf[startIdx+startLen:nextStartIdx], "\x00")
+nalu := append([]byte(nil), r.buf[startLen:nextStartIdx]...)
 r.buf = append(r.buf[:0], r.buf[nextStartIdx:]...)
 if len(nalu) == 0 {
 continue
 }
-return append([]byte(nil), nalu...), nil
+return nalu, nil
 }
 }
 
 if r.eof {
 if startIdx >= 0 {
-nalu := bytes.Trim(r.buf[startIdx+startLen:], "\x00")
+nalu := append([]byte(nil), r.buf[startLen:]...)
 r.buf = nil
 if len(nalu) == 0 {
 return nil, io.EOF
 }
-return append([]byte(nil), nalu...), nil
+return nalu, nil
 }
-if len(bytes.Trim(r.buf, "\x00")) == 0 {
+if len(r.buf) == 0 {
 return nil, io.EOF
 }
 return nil, errors.New("annex-b stream ended without start code")
@@ -91,22 +96,37 @@ return -1, 0
 }
 
 type AccessUnitAssembler struct {
-nalus    [][]byte
-hasVCL   bool
-hasIDR   bool
-lastSPS  []byte
-lastPPS  []byte
-updated  time.Time
+nalus   [][]byte
+hasVCL  bool
+hasIDR  bool
+lastSPS []byte
+lastPPS []byte
+updated time.Time
+auBytes int
+
+maxNALUs int
+maxBytes int
 }
 
-func NewAccessUnitAssembler() *AccessUnitAssembler {
-return &AccessUnitAssembler{updated: time.Now()}
+func NewAccessUnitAssembler(maxNALUs int, maxBytes int) *AccessUnitAssembler {
+if maxNALUs <= 0 {
+maxNALUs = 64
+}
+if maxBytes <= 0 {
+maxBytes = 2 * 1024 * 1024
+}
+return &AccessUnitAssembler{
+updated:  time.Now(),
+maxNALUs: maxNALUs,
+maxBytes: maxBytes,
+}
 }
 
-func (a *AccessUnitAssembler) Push(nalu []byte) ([]byte, bool, bool) {
+func (a *AccessUnitAssembler) Push(nalu []byte) ([]byte, bool, bool, string) {
 if len(nalu) < 1 {
-return nil, false, false
+return nil, false, false, ""
 }
+
 nType := nalu[0] & 0x1F
 isVCL := nType >= 1 && nType <= 5
 
@@ -114,52 +134,76 @@ if nType == 9 {
 if a.hasVCL {
 frame, key := a.flushFrame()
 a.resetState()
-a.nalus = append(a.nalus, append([]byte(nil), nalu...))
-a.updated = time.Now()
-return frame, key, true
+a.addNALU(nalu)
+return frame, key, true, "aud"
 }
 a.resetState()
-a.nalus = append(a.nalus, append([]byte(nil), nalu...))
-a.updated = time.Now()
-return nil, false, false
+a.addNALU(nalu)
+return nil, false, false, ""
 }
 
-if isVCL && a.hasVCL && startsNewPicture(nalu) {
+if isVCL && a.hasVCL {
+newPic, known := startsNewPicture(nalu)
+if known && newPic {
 frame, key := a.flushFrame()
 a.resetState()
 a.addNALU(nalu)
-return frame, key, true
+return frame, key, true, "new_picture"
+}
+if !known {
+frame, key := a.flushFrame()
+a.resetState()
+a.addNALU(nalu)
+return frame, key, true, "uncertain_slice_boundary"
+}
 }
 
 a.addNALU(nalu)
-return nil, false, false
+
+if a.auBytes > a.maxBytes && a.hasVCL {
+frame, key := a.flushFrame()
+a.resetState()
+return frame, key, true, "max_au_bytes"
+}
+if len(a.nalus) > a.maxNALUs && a.hasVCL {
+frame, key := a.flushFrame()
+a.resetState()
+return frame, key, true, "max_au_nalus"
+}
+if (a.auBytes > a.maxBytes || len(a.nalus) > a.maxNALUs) && !a.hasVCL {
+a.resetState()
+return nil, false, false, "non_vcl_guard_reset"
 }
 
-func (a *AccessUnitAssembler) FlushIfStale(maxAge time.Duration) ([]byte, bool, bool) {
+return nil, false, false, ""
+}
+
+func (a *AccessUnitAssembler) FlushIfStale(maxAge time.Duration) ([]byte, bool, bool, string) {
 if !a.hasVCL {
-return nil, false, false
+return nil, false, false, ""
 }
 if time.Since(a.updated) < maxAge {
-return nil, false, false
+return nil, false, false, ""
 }
 frame, key := a.flushFrame()
 a.resetState()
-return frame, key, true
+return frame, key, true, "stale_timeout"
 }
 
-func (a *AccessUnitAssembler) FlushFinal() ([]byte, bool, bool) {
+func (a *AccessUnitAssembler) FlushFinal() ([]byte, bool, bool, string) {
 if !a.hasVCL {
-return nil, false, false
+return nil, false, false, ""
 }
 frame, key := a.flushFrame()
 a.resetState()
-return frame, key, true
+return frame, key, true, "eof"
 }
 
 func (a *AccessUnitAssembler) addNALU(nalu []byte) {
 nType := nalu[0] & 0x1F
 copyNALU := append([]byte(nil), nalu...)
 a.nalus = append(a.nalus, copyNALU)
+a.auBytes += len(copyNALU)
 a.updated = time.Now()
 
 if nType == 7 {
@@ -206,7 +250,7 @@ nalus = append(prefix, nalus...)
 }
 }
 
-out := make([]byte, 0, 4096)
+out := make([]byte, 0, a.auBytes+len(nalus)*4)
 for _, n := range nalus {
 if len(n) == 0 {
 continue
@@ -221,22 +265,33 @@ func (a *AccessUnitAssembler) resetState() {
 a.nalus = a.nalus[:0]
 a.hasVCL = false
 a.hasIDR = false
+a.auBytes = 0
 a.updated = time.Now()
 }
 
-func startsNewPicture(nalu []byte) bool {
+func startsNewPicture(nalu []byte) (bool, bool) {
 if len(nalu) < 2 {
-return false
+return false, false
 }
 nType := nalu[0] & 0x1F
 if nType < 1 || nType > 5 {
-return false
+return false, false
 }
 
-rbsp := make([]byte, 0, len(nalu)-1)
+rbsp := decodeRBSP(nalu[1:])
+br := newBitReader(rbsp)
+firstMB, ok := br.readUE()
+if !ok {
+return false, false
+}
+return firstMB == 0, true
+}
+
+func decodeRBSP(payload []byte) []byte {
+rbsp := make([]byte, 0, len(payload))
 zeros := 0
-for i := 1; i < len(nalu); i++ {
-b := nalu[i]
+for i := 0; i < len(payload); i++ {
+b := payload[i]
 if zeros == 2 && b == 0x03 {
 zeros = 0
 continue
@@ -248,13 +303,7 @@ zeros++
 zeros = 0
 }
 }
-
-br := newBitReader(rbsp)
-firstMB, ok := br.readUE()
-if !ok {
-return false
-}
-return firstMB == 0
+return rbsp
 }
 
 type bitReader struct {

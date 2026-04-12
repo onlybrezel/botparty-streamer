@@ -33,6 +33,12 @@ for (const item of (process.env.DEVICE_SECRETS || '').split(';')) {
   }
 }
 
+if (!issuerBearer && deviceSecrets.size === 0) {
+  throw new Error(
+    'refusing to start token backend without auth: set TOKEN_ISSUER_BEARER and/or DEVICE_SECRETS',
+  );
+}
+
 function isAuthorized(req) {
   if (issuerBearer) {
     const auth = req.get('authorization') || '';
