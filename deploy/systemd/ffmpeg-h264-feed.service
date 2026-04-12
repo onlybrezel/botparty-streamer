@@ -1,0 +1,17 @@
+[Unit]
+Description=FFmpeg H264 Feed for lk-h264-publisher
+After=network-online.target lk-h264-publisher.service
+Wants=network-online.target lk-h264-publisher.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/ffmpeg-h264-feed
+ExecStart=/bin/bash -lc "$FFMPEG_CMD"
+Restart=always
+RestartSec=1
+User=botparty
+Group=botparty
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
