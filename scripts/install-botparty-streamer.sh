@@ -1,24 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET="/usr/local/bin/botparty-streamer"
+TARGET="${BOTPARTY_STREAMER_TARGET:-/home/pi/bin/botparty-streamer}"
 ARCH="native"
 INSTALL="true"
 VERSION="v0.1.0"
 
 usage() {
   cat >&2 <<'EOF'
-usage: install-botparty-streamer.sh [--arch native|amd64|arm64|all] [--version v0.1.0] [--no-install]
+usage: install-botparty-streamer.sh [--arch native|amd64|arm64|arm|all] [--version v0.1.0] [--no-install]
 
 Defaults:
   --arch native
-  install native binary to /usr/local/bin/botparty-streamer
+  install native binary to /home/pi/bin/botparty-streamer
+
+Cross-build targets:
+  amd64   linux/amd64
+  arm64   linux/arm64  (Raspberry Pi 4/5 64-bit)
+  arm     linux/armv7  (Raspberry Pi 2/3 32-bit)
+  all     all three cross targets
 
 Examples:
   ./scripts/install-botparty-streamer.sh
   ./scripts/install-botparty-streamer.sh --arch amd64 --version v0.1.0 --no-install
   ./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.0 --no-install
-  ./scripts/install-botparty-streamer.sh --arch all --version v0.1.0 --no-install
+  ./scripts/install-botparty-streamer.sh --arch arm   --version v0.1.0 --no-install
+  ./scripts/install-botparty-streamer.sh --arch all   --version v0.1.0 --no-install
 EOF
 }
 
@@ -76,6 +83,10 @@ build_linux_arm64() {
   CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "bin/botparty-streamer-${VERSION}-linux-arm64" .
 }
 
+build_linux_arm() {
+  CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -o "bin/botparty-streamer-${VERSION}-linux-arm" .
+}
+
 case "$ARCH" in
   native)
     build_native
@@ -86,9 +97,13 @@ case "$ARCH" in
   arm64|linux-arm64|rpi)
     build_linux_arm64
     ;;
+  arm|linux-arm|armv7|armhf)
+    build_linux_arm
+    ;;
   all)
     build_linux_amd64
     build_linux_arm64
+    build_linux_arm
     ;;
   *)
     echo "unsupported arch: $ARCH" >&2
@@ -108,11 +123,9 @@ if [[ "$ARCH" != "native" ]]; then
   exit 1
 fi
 
-if [[ "$(id -u)" -ne 0 ]]; then
-  SUDO="sudo"
-else
-  SUDO=""
-fi
-
-$SUDO install -m 0755 bin/botparty-streamer "$TARGET"
+TARGET_DIR="$(dirname "$TARGET")"
+mkdir -p "$TARGET_DIR"
+install -m 0755 bin/botparty-streamer "$TARGET" 2>/dev/null || {
+  sudo install -m 0755 bin/botparty-streamer "$TARGET"
+}
 echo "Installed $TARGET from $(pwd)/bin/botparty-streamer" >&2
