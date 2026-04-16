@@ -5,6 +5,7 @@ import (
 "context"
 "encoding/json"
 "fmt"
+"math/rand"
 "net/http"
 "strings"
 "time"
@@ -49,11 +50,21 @@ Token string `json:"token"`
 }
 
 func (p HTTPTokenProvider) Fetch(ctx context.Context) (string, error) {
+// Apply ±10% jitter to TTL so multiple streamer instances don't all
+// request token refreshes at exactly the same time.
+ttl := p.TTLSeconds
+if ttl > 0 {
+jitter := int(float64(ttl) * 0.1 * (2*rand.Float64() - 1))
+ttl += jitter
+if ttl < 30 {
+ttl = 30
+}
+}
 body, err := json.Marshal(tokenRequest{
 Room:       p.Room,
 Identity:   p.Identity,
 Name:       p.Name,
-TTLSeconds: p.TTLSeconds,
+TTLSeconds: ttl,
 })
 if err != nil {
 return "", fmt.Errorf("marshal token request: %w", err)

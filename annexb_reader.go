@@ -191,12 +191,35 @@ return frame, key, true, "stale_timeout"
 }
 
 func (a *AccessUnitAssembler) FlushFinal() ([]byte, bool, bool, string) {
-if !a.hasVCL {
-return nil, false, false, ""
+	if !a.hasVCL {
+		return nil, false, false, ""
+	}
+	frame, key := a.flushFrame()
+	a.resetState()
+	return frame, key, true, "eof"
 }
-frame, key := a.flushFrame()
-a.resetState()
-return frame, key, true, "eof"
+
+// LastSPSPPS returns copies of the most recently seen SPS and PPS NALUs.
+// Either or both may be nil if not yet observed.
+func (a *AccessUnitAssembler) LastSPSPPS() (sps []byte, pps []byte) {
+	if len(a.lastSPS) > 0 {
+		sps = append([]byte(nil), a.lastSPS...)
+	}
+	if len(a.lastPPS) > 0 {
+		pps = append([]byte(nil), a.lastPPS...)
+	}
+	return
+}
+
+// SeedSPSPPS pre-loads SPS/PPS into the assembler's cache if not already set.
+// Used to carry SPS/PPS across ffmpeg connection restarts.
+func (a *AccessUnitAssembler) SeedSPSPPS(sps, pps []byte) {
+	if len(sps) > 0 && len(a.lastSPS) == 0 {
+		a.lastSPS = append([]byte(nil), sps...)
+	}
+	if len(pps) > 0 && len(a.lastPPS) == 0 {
+		a.lastPPS = append([]byte(nil), pps...)
+	}
 }
 
 func (a *AccessUnitAssembler) addNALU(nalu []byte) {

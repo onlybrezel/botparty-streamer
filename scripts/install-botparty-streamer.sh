@@ -4,11 +4,11 @@ set -euo pipefail
 TARGET="${BOTPARTY_STREAMER_TARGET:-/home/pi/bin/botparty-streamer}"
 ARCH="native"
 INSTALL="true"
-VERSION="v0.1.0"
+VERSION="v0.1.1"
 
 usage() {
   cat >&2 <<'EOF'
-usage: install-botparty-streamer.sh [--arch native|amd64|arm64|arm|all] [--version v0.1.0] [--no-install]
+usage: install-botparty-streamer.sh [--arch native|amd64|arm64|arm|all] [--version v0.1.1] [--no-install]
 
 Defaults:
   --arch native
@@ -22,10 +22,10 @@ Cross-build targets:
 
 Examples:
   ./scripts/install-botparty-streamer.sh
-  ./scripts/install-botparty-streamer.sh --arch amd64 --version v0.1.0 --no-install
-  ./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.0 --no-install
-  ./scripts/install-botparty-streamer.sh --arch arm   --version v0.1.0 --no-install
-  ./scripts/install-botparty-streamer.sh --arch all   --version v0.1.0 --no-install
+  ./scripts/install-botparty-streamer.sh --arch amd64 --version v0.1.1 --no-install
+  ./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.1 --no-install
+  ./scripts/install-botparty-streamer.sh --arch arm   --version v0.1.1 --no-install
+  ./scripts/install-botparty-streamer.sh --arch all   --version v0.1.1 --no-install
 EOF
 }
 

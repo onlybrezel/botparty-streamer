@@ -7,9 +7,11 @@ import (
 "io"
 "log"
 "math"
+"math/rand"
 "net"
 "os"
 "os/signal"
+"sync"
 "sync/atomic"
 "time"
 )
@@ -31,6 +33,31 @@ lastKeyframeUnixNanos int64
 
 func (s *runtimeStats) markKeyframe(t time.Time) {
 atomic.StoreInt64(&s.lastKeyframeUnixNanos, t.UnixNano())
+}
+
+// spsPPSGlobalCache carries SPS/PPS NALUs across ffmpeg connection restarts so
+// that new assemblers can hit the ground running without a fresh IDR sequence.
+type spsPPSGlobalCache struct {
+mu  sync.Mutex
+sps []byte
+pps []byte
+}
+
+func (c *spsPPSGlobalCache) update(sps, pps []byte) {
+c.mu.Lock()
+defer c.mu.Unlock()
+if len(sps) > 0 {
+c.sps = append([]byte(nil), sps...)
+}
+if len(pps) > 0 {
+c.pps = append([]byte(nil), pps...)
+}
+}
+
+func (c *spsPPSGlobalCache) get() ([]byte, []byte) {
+c.mu.Lock()
+defer c.mu.Unlock()
+return append([]byte(nil), c.sps...), append([]byte(nil), c.pps...)
 }
 
 func main() {
@@ -70,9 +97,13 @@ defer cancel()
 
 stats := &runtimeStats{}
 frameCh := make(chan EncodedFrame, cfg.FrameChanSize)
+spspps := &spsPPSGlobalCache{}
 
-go runInputServer(ctx, cfg, frameCh, stats, logger)
+go runInputServer(ctx, cfg, frameCh, stats, spspps, logger)
 go runMetricsLogger(ctx, cfg, frameCh, stats, logger)
+if cfg.HealthAddr != "" {
+	go runHealthServer(ctx, cfg.HealthAddr, stats, frameCh, logger)
+}
 
 attempt := 0
 waitForKeyframe := true
@@ -120,7 +151,7 @@ waitOrDone(ctx, cfg.ReconnectMin)
 }
 }
 
-func runInputServer(ctx context.Context, cfg Config, frameCh chan EncodedFrame, stats *runtimeStats, logger *log.Logger) {
+func runInputServer(ctx context.Context, cfg Config, frameCh chan EncodedFrame, stats *runtimeStats, spspps *spsPPSGlobalCache, logger *log.Logger) {
 ln, err := net.Listen("tcp", cfg.InputListenAddr)
 if err != nil {
 logger.Fatalf("failed to listen on %s: %v", cfg.InputListenAddr, err)
@@ -151,16 +182,22 @@ continue
 
 atomic.AddUint64(&stats.inputConnections, 1)
 logger.Printf("ffmpeg connected from %s", conn.RemoteAddr())
-handleInputConnection(ctx, conn, cfg, frameCh, stats, logger)
+handleInputConnection(ctx, conn, cfg, frameCh, stats, spspps, logger)
 logger.Printf("ffmpeg disconnected")
 }
 }
 
-func handleInputConnection(ctx context.Context, conn net.Conn, cfg Config, frameCh chan EncodedFrame, stats *runtimeStats, logger *log.Logger) {
+func handleInputConnection(ctx context.Context, conn net.Conn, cfg Config, frameCh chan EncodedFrame, stats *runtimeStats, spspps *spsPPSGlobalCache, logger *log.Logger) {
 defer conn.Close()
 
 reader := NewAnnexBReader(conn)
 assembler := NewAccessUnitAssembler(cfg.AUMaxNALUs, cfg.AUMaxBytes)
+// Seed SPS/PPS from a previous ffmpeg session so the first keyframe is
+// decodable even if ffmpeg restarted without sending fresh parameter sets.
+{
+cachedSPS, cachedPPS := spspps.get()
+assembler.SeedSPSPPS(cachedSPS, cachedPPS)
+}
 frameDuration := time.Second / time.Duration(cfg.FPS)
 
 for {
@@ -200,6 +237,10 @@ if frame, key, ok, reason := assembler.Push(nalu); ok {
 sendFrame(frameCh, EncodedFrame{Data: frame, Duration: frameDuration, KeyFrame: key, CreatedAt: time.Now()}, stats)
 if key {
 stats.markKeyframe(time.Now())
+// Keep the global SPS/PPS cache fresh so a new assembler after a
+// reconnect can inject them into the first keyframe immediately.
+sps, pps := assembler.LastSPSPPS()
+spspps.update(sps, pps)
 }
 if reason == "max_au_bytes" || reason == "max_au_nalus" || reason == "uncertain_slice_boundary" {
 logger.Printf("guard flush reason=%s bytes=%d key=%v", reason, len(frame), key)
@@ -319,9 +360,11 @@ return min
 }
 ms := float64(min.Milliseconds()) * math.Pow(1.8, float64(attempt-1))
 if ms > float64(max.Milliseconds()) {
-return max
+ms = float64(max.Milliseconds())
 }
-return time.Duration(ms) * time.Millisecond
+// ±10% jitter to prevent thundering herd when multiple streamers reconnect
+jitter := ms * 0.1 * (2*rand.Float64() - 1)
+return time.Duration(ms+jitter) * time.Millisecond
 }
 
 func waitOrDone(ctx context.Context, d time.Duration) {

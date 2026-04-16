@@ -1,57 +1,57 @@
 # botparty-streamer
 
-Kleines, plattformneutrales Go-Tool, das bereits H.264-encodiertes Annex-B Video von ffmpeg per TCP annimmt und als normaler LiveKit Participant published.
+A small, cross-platform Go tool that accepts already H.264-encoded Annex-B video from ffmpeg over TCP and publishes it as a normal LiveKit participant.
 
-## Architektur (beibehalten)
+## Architecture
 
-- Eingabe: genau eine Quelle `tcp://127.0.0.1:5004` (Annex-B NAL Units).
-- ffmpeg macht Capture + Encoding (Hardware/Software je nach Plattform).
-- Go-Tool macht nur:
-  - Annex-B Parsing
-  - Access-Unit Assembly
-  - SPS/PPS Handling vor IDR
-  - Publish als H.264 Video Track zu LiveKit
-  - Reconnect, Logging, sauberes Shutdown
+- Input: exactly one source `tcp://127.0.0.1:5004` (Annex-B NAL units).
+- ffmpeg handles capture + encoding (hardware/software depending on platform).
+- The Go tool only handles:
+  - Annex-B parsing
+  - Access-unit assembly
+  - SPS/PPS handling before IDR frames
+  - Publishing as H.264 video track to LiveKit
+  - Reconnect, logging, clean shutdown
 - Token:
-  - kein API-Key/Secret auf dem Gerät
-  - Gerät verwendet kurzlebige Tokens (direkt via `LK_TOKEN` oder via `TOKEN_ENDPOINT`)
+  - No API key/secret on the device
+  - Device uses short-lived tokens (via `LK_TOKEN` directly or via `TOKEN_ENDPOINT`)
 
-Klare Trennung:
+Clear separation of concerns:
 
-- ffmpeg = Encoder
-- botparty-streamer = LiveKit Publisher
-- Backend = Token-Aussteller
+- ffmpeg = encoder
+- botparty-streamer = LiveKit publisher
+- Backend = token issuer
 
-## Was gegenüber dem Prototyp gehärtet wurde
+## Hardening over the prototype
 
-- Keine destruktive `bytes.Trim(..., "\\x00")` Logik mehr im NAL-Parser.
-- TCP-Chunking bleibt transparent, NAL-Grenzen werden ausschließlich über Annex-B Startcodes erkannt.
-- AU-Guards hinzugefügt:
+- Removed destructive `bytes.Trim(..., "\x00")` logic from the NAL parser.
+- TCP chunking is transparent; NAL boundaries are detected exclusively via Annex-B start codes.
+- AU guards added:
   - `AU_MAX_NALUS`
   - `AU_MAX_BYTES`
-  - Flush bei unsicherer Slice-Grenze statt langem Sammeln.
-- Queue-Modell auf low-latency ausgelegt:
-  - sehr kleine Queue (`FRAME_CHAN_SIZE` Default `4`)
-  - strict latest-frame / drop-oldest
-  - Publish-Drop für veraltete Frames (`MAX_PUBLISH_STALE_MS`).
-- Reader/Flush-Timeouts enger gesetzt:
+  - Flush on uncertain slice boundary instead of long accumulation.
+- Queue model tuned for low-latency:
+  - Very small queue (`FRAME_CHAN_SIZE` default `4`)
+  - Strict latest-frame / drop-oldest
+  - Publish-drop for stale frames (`MAX_PUBLISH_STALE_MS`).
+- Reader/flush timeouts tightened:
   - `INPUT_READ_TIMEOUT_MS=500`
   - `FRAME_FLUSH_TIMEOUT_MS=50`
-- Reconnect-Rebase:
-  - Queue wird bei Session-Neustart geleert
-  - Publish wartet erneut auf Keyframe.
-- Session-Close-Pfad bereinigt:
-  - kein pro-Session Hintergrund-Goroutine-Wait auf globales Shutdown-Signal mehr.
-- Laufzeitmetriken im Log:
+- Reconnect rebase:
+  - Queue is drained on session restart
+  - Publisher waits for keyframe again.
+- Session close path cleaned:
+  - No per-session background goroutine waiting on global shutdown signal.
+- Runtime metrics in log:
   - queue depth
-  - dropped frames (queue/stale/wait keyframe)
+  - dropped frames (queue/stale/wait-keyframe)
   - reconnect count
   - parse errors
   - last keyframe seen
-- Token-Backend fail-closed:
-  - Start bricht ab, wenn weder Bearer noch Device-Secrets gesetzt sind.
+- Token backend fail-closed:
+  - Startup aborts if neither bearer nor device secrets are set.
 
-## Verzeichnislayout
+## Directory layout
 
 ```
 .
@@ -80,39 +80,39 @@ Klare Trennung:
 
 ## Build
 
-Voraussetzung: Go 1.22+
+Prerequisite: Go 1.22+
 
 ```bash
 go mod tidy
 go build -o bin/botparty-streamer .
 ```
 
-Build + systemweite Installation in einem Schritt:
+Build + system-wide installation in one step:
 
 ```bash
 ./scripts/install-botparty-streamer.sh
 ```
 
-Gezielte Linux Builds ueber das Skript:
+Targeted Linux builds via the script:
 
 ```bash
-# Nur Linux AMD64 bauen
+# Linux AMD64 only
 ./scripts/install-botparty-streamer.sh --arch amd64 --version v0.1.0 --no-install
 
-# Nur Linux ARM64 bauen (Raspberry Pi 64-bit)
+# Linux ARM64 only (Raspberry Pi 64-bit)
 ./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.0 --no-install
 
-# Beide Linux Release-Binaries auf einmal bauen
+# Both Linux release binaries at once
 ./scripts/install-botparty-streamer.sh --arch all --version v0.1.0 --no-install
 ```
 
-Cross-Build Beispiele:
+Cross-build examples:
 
 ```bash
 # Linux x86_64
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-v0.1.0-linux-amd64 .
 
-# Linux ARM64 (z.B. Raspberry Pi OS 64-bit)
+# Linux ARM64 (e.g. Raspberry Pi OS 64-bit)
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-v0.1.0-linux-arm64 .
 
 # macOS Apple Silicon
@@ -122,48 +122,48 @@ GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-darwin-
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-windows-amd64.exe .
 ```
 
-Hinweis zur Cross-Platform Aussage:
+Note on cross-platform support:
 
-- Signal-Handling ist über Build-Tags getrennt (`signals_unix.go`, `signals_windows.go`).
-- Die Laufzeit bleibt plattformneutral, sofern ffmpeg auf der Zielplattform H.264 Annex-B liefert.
-- Reale Interop- und Build-Validierung auf jeder Zielplattform bleibt vor Produktion Pflicht.
+- Signal handling is split via build tags (`signals_unix.go`, `signals_windows.go`).
+- The runtime itself is platform-neutral as long as ffmpeg provides H.264 Annex-B on the target platform.
+- Real interop and build validation on each target platform is required before production use.
 
-## Konfiguration
+## Configuration
 
 ```bash
 cp .env.example .env
 ```
 
-Wichtige Low-Latency Parameter:
+Key low-latency parameters:
 
-- `FRAME_CHAN_SIZE=4` (klein halten)
-- `MAX_PUBLISH_STALE_MS=250` (alte Frames verwerfen)
+- `FRAME_CHAN_SIZE=4` (keep small)
+- `MAX_PUBLISH_STALE_MS=250` (discard old frames)
 - `AU_MAX_NALUS=64`
 - `AU_MAX_BYTES=2097152`
 - `INPUT_READ_TIMEOUT_MS=500`
 - `FRAME_FLUSH_TIMEOUT_MS=50`
 
-Input-Bind-Schutz:
+Input bind protection:
 
-- Standard ist Loopback-only (`INPUT_LISTEN_ADDR=127.0.0.1:5004`).
-- Nicht-Loopback Binding wird standardmaessig abgewiesen.
-- Fuer bewusstes externes Binding muss `ALLOW_REMOTE_INPUT=true` gesetzt werden.
+- Default is loopback-only (`INPUT_LISTEN_ADDR=127.0.0.1:5004`).
+- Non-loopback binding is rejected by default.
+- Set `ALLOW_REMOTE_INPUT=true` to explicitly allow external binding.
 
-Empfohlen: Token über Backend beziehen (ohne API-Key/Secret auf Gerät):
+Recommended: fetch tokens from the backend (no API key/secret on device):
 
 - `TOKEN_ENDPOINT`
 - `DEVICE_ID`
 - `DEVICE_SECRET`
 
-Direktmodus über `LK_TOKEN` ist möglich, Token muss kurzlebig bleiben.
+Direct mode via `LK_TOKEN` is supported; keep tokens short-lived.
 
-## Startreihenfolge
+## Startup order
 
-1. Token-Backend starten.
-2. Publisher starten.
-3. ffmpeg starten und nach `tcp://127.0.0.1:5004` schreiben.
+1. Start the token backend.
+2. Start the publisher.
+3. Start ffmpeg writing to `tcp://127.0.0.1:5004`.
 
-Publisher starten (mit env):
+Start publisher (with env):
 
 ```bash
 set -a
@@ -172,7 +172,7 @@ set +a
 ./bin/botparty-streamer
 ```
 
-Optionales Token-Fetch Skript:
+Optional token-fetch script:
 
 ```bash
 set -a
@@ -185,9 +185,9 @@ set +a
 ./bin/botparty-streamer
 ```
 
-## ffmpeg Beispiele (kein Re-Encode im Go-Tool)
+## ffmpeg examples (no re-encoding in the Go tool)
 
-Wichtig: Ausgabe ist Annex-B H.264 via TCP localhost.
+Important: output must be Annex-B H.264 via TCP localhost.
 
 ### Raspberry Pi 4 (h264_v4l2m2m)
 
@@ -212,7 +212,7 @@ ffmpeg -hide_banner -loglevel warning \
   -f h264 tcp://127.0.0.1:5004
 ```
 
-Software-Fallback Linux:
+Software fallback (Linux):
 
 ```bash
 ffmpeg -hide_banner -loglevel warning \
@@ -243,19 +243,19 @@ ffmpeg -hide_banner -loglevel warning ^
   -f h264 tcp://127.0.0.1:5004
 ```
 
-AMF/QSV/Software sind analog austauschbar, solange Ausgang H.264 Annex-B bleibt.
+AMF/QSV/software are interchangeable as long as the output remains H.264 Annex-B.
 
 ## systemd (Linux)
 
-Publisher Unit:
+Publisher unit:
 
 - `deploy/systemd/botparty-streamer.service`
 
-FFmpeg Feed Unit:
+FFmpeg feed unit:
 
 - `deploy/systemd/ffmpeg-h264-feed.service`
 
-Installationsbeispiel:
+Installation example:
 
 ```bash
 ./scripts/install-botparty-streamer.sh
@@ -263,7 +263,7 @@ sudo install -m 0644 deploy/systemd/botparty-streamer.service /etc/systemd/syste
 sudo install -m 0644 deploy/systemd/ffmpeg-h264-feed.service /etc/systemd/system/ffmpeg-h264-feed.service
 ```
 
-Beispiel `/etc/default/botparty-streamer`:
+Example `/etc/default/botparty-streamer`:
 
 ```bash
 LK_URL=wss://livekit.example.com
@@ -286,13 +286,13 @@ DEVICE_SECRET=replace-with-strong-secret
 TOKEN_TTL_SECONDS=300
 ```
 
-Beispiel `/etc/default/ffmpeg-h264-feed`:
+Example `/etc/default/ffmpeg-h264-feed`:
 
 ```bash
 FFMPEG_CMD='ffmpeg -hide_banner -loglevel warning -f v4l2 -framerate 30 -video_size 1280x720 -i /dev/video0 -an -c:v h264_v4l2m2m -g 60 -bf 0 -f h264 tcp://127.0.0.1:5004'
 ```
 
-Aktivieren:
+Enable:
 
 ```bash
 sudo systemctl daemon-reload
@@ -300,12 +300,12 @@ sudo systemctl enable --now botparty-streamer.service
 sudo systemctl enable --now ffmpeg-h264-feed.service
 ```
 
-## Windows Service / macOS LaunchAgent Hinweise
+## Windows Service / macOS LaunchAgent notes
 
-- Windows: über NSSM oder WinSW den Publisher als Dienst starten, ffmpeg als separaten Dienst/Task.
-- macOS: LaunchAgent/LaunchDaemon für Publisher und ffmpeg getrennt anlegen, gleiche Startreihenfolge wie oben.
+- Windows: run the publisher as a service via NSSM or WinSW, ffmpeg as a separate service/task.
+- macOS: create separate LaunchAgent/LaunchDaemon entries for the publisher and ffmpeg; use the same startup order as above.
 
-## Minimales Token-Backend (Node.js)
+## Minimal token backend (Node.js)
 
 ```bash
 cd examples/token-backend-node
@@ -314,35 +314,35 @@ npm install
 npm start
 ```
 
-Wichtig:
+Important:
 
-- Das Beispiel startet fail-closed.
-- Ohne `TOKEN_ISSUER_BEARER` und ohne `DEVICE_SECRETS` beendet sich der Prozess absichtlich mit Fehler.
+- The example starts fail-closed.
+- Without `TOKEN_ISSUER_BEARER` and without `DEVICE_SECRETS` the process exits intentionally with an error.
 
 Endpoint:
 
 - `POST /token`
 - Body: `{"room":"robot-room-1","identity":"robot-streamer-1","name":"Robot Streamer 1","ttlSeconds":300}`
-- Antwort: `{"token":"..."}`
+- Response: `{"token":"..."}`
 
 ## Troubleshooting
 
-1. `connect to livekit` schlägt fehl:
-- URL prüfen (`LK_URL`), Zertifikate prüfen, Token-TTL prüfen.
+1. `connect to livekit` fails:
+   - Check `LK_URL`, verify certificates, check token TTL.
 
-2. Kein Video im Room:
-- Prüfen, ob ffmpeg wirklich nach `tcp://127.0.0.1:5004` schreibt.
-- Publisher-Log auf `ffmpeg connected` prüfen.
+2. No video in room:
+   - Confirm ffmpeg is writing to `tcp://127.0.0.1:5004`.
+   - Check publisher log for `ffmpeg connected`.
 
-3. Reconnect zeigt zunächst kein Bild:
-- Publisher wartet absichtlich auf nächstes Keyframe, um alte/falsche Frames nicht zu senden.
-- GOP verkürzen (z.B. `-g 60`) falls Recovery zu langsam ist.
+3. No image immediately after reconnect:
+   - The publisher intentionally waits for the next keyframe to avoid sending stale frames.
+   - Shorten the GOP (e.g. `-g 60`) if recovery is too slow.
 
-4. Hohe Latenz:
-- `FRAME_CHAN_SIZE` klein halten.
-- `MAX_PUBLISH_STALE_MS` nicht zu hoch setzen.
-- ffmpeg low-latency Encoder-Settings nutzen (`-tune zerolatency`, `-bf 0`).
+4. High latency:
+   - Keep `FRAME_CHAN_SIZE` small.
+   - Do not set `MAX_PUBLISH_STALE_MS` too high.
+   - Use ffmpeg low-latency encoder settings (`-tune zerolatency`, `-bf 0`).
 
-5. Häufige Parser-Fehler:
-- Sicherstellen, dass ffmpeg wirklich Annex-B H.264 liefert (`-f h264`).
-- Encoder/Bitstream prüfen, insbesondere bei exotischen Hardware-Pipelines.
+5. Frequent parser errors:
+   - Make sure ffmpeg is producing real Annex-B H.264 (`-f h264`).
+   - Check the encoder/bitstream, especially with exotic hardware pipelines.
