@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/livekit/protocol/livekit"
 	lksdk "github.com/livekit/server-sdk-go/v2"
@@ -62,8 +63,22 @@ func ConnectLiveKit(cfg Config, token string, logger *log.Logger) (*LiveKitSessi
 	return &LiveKitSession{Room: room, Track: track, pub: pub, disconnected: disconnected}, nil
 }
 
+// WriteFrame writes an encoded H264 frame to the LiveKit track.
+// It uses a 200ms deadline to avoid blocking indefinitely on network congestion;
+// if the deadline expires the frame is dropped and an error is returned so the
+// caller can decide whether to reconnect.
 func (s *LiveKitSession) WriteFrame(frame EncodedFrame) error {
-	return s.Track.WriteSample(media.Sample{Data: frame.Data, Duration: frame.Duration}, nil)
+	type result struct{ err error }
+	done := make(chan result, 1)
+	go func() {
+		done <- result{s.Track.WriteSample(media.Sample{Data: frame.Data, Duration: frame.Duration}, nil)}
+	}()
+	select {
+	case r := <-done:
+		return r.err
+	case <-time.After(200 * time.Millisecond):
+		return fmt.Errorf("WriteSample timeout: network congestion or blocked track")
+	}
 }
 
 func (s *LiveKitSession) Disconnected() <-chan struct{} {

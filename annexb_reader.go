@@ -161,6 +161,11 @@ return frame, key, true, "uncertain_slice_boundary"
 a.addNALU(nalu)
 
 if a.auBytes > a.maxBytes && a.hasVCL {
+// Guard-flush: a partial AU flushed here may not be independently decodable
+// unless it contains an IDR + SPS/PPS. flushFrame() prepends the cached
+// SPS/PPS when hasIDR is set. Non-IDR partial flushes rely on the decoder
+// reference frame buffer remaining valid; the waitForKeyframe path in
+// main.go re-arms on the next error to recover gracefully.
 frame, key := a.flushFrame()
 a.resetState()
 return frame, key, true, "max_au_bytes"

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"net"
@@ -26,11 +27,13 @@ type Config struct {
 	AUMaxNALUs       int
 	AUMaxBytes       int
 	MetricsInterval  time.Duration
+	MetricsStateFile string
 	AllowRemoteInput bool
 
 	HealthAddr string
 
 	StaticToken string
+	TokenFile   string
 
 	TokenEndpoint   string
 	TokenAuthBearer string
@@ -44,6 +47,13 @@ type Config struct {
 }
 
 func LoadConfig() (Config, error) {
+	configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE"))
+	if configFile != "" {
+		if err := loadEnvFile(configFile); err != nil {
+			return Config{}, fmt.Errorf("load CONFIG_FILE: %w", err)
+		}
+	}
+
 	cfg := Config{
 		LiveKitURL:      strings.TrimSpace(os.Getenv("LK_URL")),
 		RoomName:        strings.TrimSpace(os.Getenv("LK_ROOM")),
@@ -60,17 +70,19 @@ func LoadConfig() (Config, error) {
 		AUMaxNALUs:       getenvInt("AU_MAX_NALUS", 64),
 		AUMaxBytes:       getenvInt("AU_MAX_BYTES", 2097152),
 		MetricsInterval:  getenvDurationMs("METRICS_INTERVAL_MS", 5000),
+		MetricsStateFile: strings.TrimSpace(os.Getenv("METRICS_STATE_FILE")),
 		AllowRemoteInput: getenvBool("ALLOW_REMOTE_INPUT", false),
 
 		HealthAddr: getenvDefault("HEALTH_ADDR", "127.0.0.1:9090"),
 
 		StaticToken:     strings.TrimSpace(os.Getenv("LK_TOKEN")),
+		TokenFile:       strings.TrimSpace(os.Getenv("TOKEN_FILE")),
 		TokenEndpoint:   strings.TrimSpace(os.Getenv("TOKEN_ENDPOINT")),
 		TokenAuthBearer: strings.TrimSpace(os.Getenv("TOKEN_AUTH_BEARER")),
 		DeviceID:        strings.TrimSpace(os.Getenv("DEVICE_ID")),
 		DeviceSecret:    strings.TrimSpace(os.Getenv("DEVICE_SECRET")),
 		TokenTimeout:    getenvDurationMs("TOKEN_TIMEOUT_MS", 3000),
-		TokenTTLSeconds: getenvInt("TOKEN_TTL_SECONDS", 300),
+		TokenTTLSeconds: getenvInt("TOKEN_TTL_SECONDS", 900),
 		ReconnectMin:    getenvDurationMs("RECONNECT_MIN_MS", 500),
 		ReconnectMax:    getenvDurationMs("RECONNECT_MAX_MS", 8000),
 	}
@@ -120,11 +132,53 @@ func LoadConfig() (Config, error) {
 		return cfg, fmt.Errorf("INPUT_LISTEN_ADDR=%q is not loopback; set ALLOW_REMOTE_INPUT=true to allow external binding", cfg.InputListenAddr)
 	}
 
-	if cfg.StaticToken == "" && cfg.TokenEndpoint == "" {
-		return cfg, errors.New("either LK_TOKEN or TOKEN_ENDPOINT must be set")
+	if cfg.TokenTTLSeconds < 60 {
+		return cfg, errors.New("TOKEN_TTL_SECONDS must be >= 60")
+	}
+
+	if cfg.StaticToken == "" && cfg.TokenEndpoint == "" && cfg.TokenFile == "" {
+		return cfg, errors.New("one of LK_TOKEN, TOKEN_FILE, or TOKEN_ENDPOINT must be set")
 	}
 
 	return cfg, nil
+}
+
+func loadEnvFile(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" {
+			continue
+		}
+		if len(value) >= 2 {
+			if (value[0] == '\'' && value[len(value)-1] == '\'') || (value[0] == '"' && value[len(value)-1] == '"') {
+				value = value[1 : len(value)-1]
+			}
+		}
+		if os.Getenv(key) == "" {
+			_ = os.Setenv(key, value)
+		}
+	}
+
+	return scanner.Err()
 }
 
 func getenvDefault(key string, fallback string) string {

@@ -1,9 +1,5 @@
-import 'dotenv/config';
-import express from 'express';
+import http from 'node:http';
 import { AccessToken } from 'livekit-server-sdk';
-
-const app = express();
-app.use(express.json({ limit: '16kb' }));
 
 const port = Number(process.env.PORT || 8088);
 const apiKey = process.env.LIVEKIT_API_KEY;
@@ -39,9 +35,48 @@ if (!issuerBearer && deviceSecrets.size === 0) {
   );
 }
 
+function sendJson(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+function parseJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      raw += chunk;
+      if (raw.length > 16 * 1024) {
+        reject(new Error('payload too large'));
+      }
+    });
+    req.on('end', () => {
+      if (!raw.trim()) {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch (err) {
+        reject(err);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function getHeader(req, name) {
+  const value = req.headers[name.toLowerCase()];
+  return typeof value === 'string' ? value : '';
+}
+
 function isAuthorized(req) {
   if (issuerBearer) {
-    const auth = req.get('authorization') || '';
+    const auth = getHeader(req, 'authorization');
     if (auth !== `Bearer ${issuerBearer}`) {
       return false;
     }
@@ -51,48 +86,64 @@ function isAuthorized(req) {
     return true;
   }
 
-  const deviceId = req.get('x-device-id') || '';
-  const deviceSecret = req.get('x-device-secret') || '';
+  const deviceId = getHeader(req, 'x-device-id');
+  const deviceSecret = getHeader(req, 'x-device-secret');
   const expected = deviceSecrets.get(deviceId);
   return Boolean(expected && expected === deviceSecret);
 }
 
-app.post('/token', async (req, res) => {
-  if (!isAuthorized(req)) {
-    return res.status(401).json({ error: 'unauthorized' });
+const server = http.createServer(async (req, res) => {
+  if (req.method === 'GET' && req.url === '/healthz') {
+    sendJson(res, 200, { ok: true });
+    return;
   }
 
-  const room = String(req.body.room || defaultRoom || '').trim();
-  const identity = String(req.body.identity || '').trim();
-  const name = String(req.body.name || identity).trim();
-  const ttlSeconds = Math.max(30, Math.min(900, Number(req.body.ttlSeconds || defaultTtl)));
+  if (req.method === 'POST' && req.url === '/token') {
+    if (!isAuthorized(req)) {
+      sendJson(res, 401, { error: 'unauthorized' });
+      return;
+    }
 
-  if (!room || !identity) {
-    return res.status(400).json({ error: 'room and identity required' });
+    let body = {};
+    try {
+      body = await parseJsonBody(req);
+    } catch (err) {
+      sendJson(res, 400, { error: 'invalid JSON body' });
+      return;
+    }
+
+    const room = String(body.room || defaultRoom || '').trim();
+    const identity = String(body.identity || '').trim();
+    const name = String(body.name || identity).trim();
+    const ttlSeconds = Math.max(30, Math.min(900, Number(body.ttlSeconds || defaultTtl)));
+
+    if (!room || !identity) {
+      sendJson(res, 400, { error: 'room and identity required' });
+      return;
+    }
+
+    const at = new AccessToken(apiKey, apiSecret, {
+      identity,
+      name,
+      ttl: `${ttlSeconds}s`,
+    });
+
+    at.addGrant({
+      room,
+      roomJoin: true,
+      canPublish: true,
+      canSubscribe: false,
+      canPublishData: false,
+    });
+
+    const token = await at.toJwt();
+    sendJson(res, 200, { token, ttlSeconds });
+    return;
   }
 
-  const at = new AccessToken(apiKey, apiSecret, {
-    identity,
-    name,
-    ttl: `${ttlSeconds}s`,
-  });
-
-  at.addGrant({
-    room,
-    roomJoin: true,
-    canPublish: true,
-    canSubscribe: false,
-    canPublishData: false,
-  });
-
-  const token = await at.toJwt();
-  return res.json({ token, ttlSeconds });
+  sendJson(res, 404, { error: 'not found' });
 });
 
-app.get('/healthz', (_req, res) => {
-  res.json({ ok: true });
-});
-
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`token backend listening on :${port}`);
 });

@@ -145,6 +145,7 @@ Key low-latency parameters:
 - `AU_MAX_BYTES=2097152`
 - `INPUT_READ_TIMEOUT_MS=500`
 - `FRAME_FLUSH_TIMEOUT_MS=50`
+- `METRICS_STATE_FILE=/var/lib/botparty-streamer/metrics.json` (optional counter persistence across restarts)
 
 Input bind protection:
 
@@ -157,8 +158,13 @@ Recommended: fetch tokens from the backend (no API key/secret on device):
 - `TOKEN_ENDPOINT`
 - `DEVICE_ID`
 - `DEVICE_SECRET`
+- `TOKEN_TTL_SECONDS` (default `900`)
+- `METRICS_STATE_FILE` (optional counter snapshot path for restart retention)
 
 Direct mode via `LK_TOKEN` is supported; keep tokens short-lived.
+You can also load a static token from `TOKEN_FILE`.
+
+For larger deployments, `CONFIG_FILE` can point to an env-style file (`KEY=VALUE`) that is loaded before normal environment resolution.
 
 ## Startup order
 
