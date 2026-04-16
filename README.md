@@ -93,7 +93,7 @@ Build + system-wide installation in one step:
 ./scripts/install-botparty-streamer.sh
 ```
 
-Targeted Linux builds via the script:
+Targeted builds via the script:
 
 ```bash
 # Linux AMD64 only
@@ -102,8 +102,11 @@ Targeted Linux builds via the script:
 # Linux ARM64 only (Raspberry Pi 64-bit)
 ./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.0 --no-install
 
-# Both Linux release binaries at once
-./scripts/install-botparty-streamer.sh --arch all --version v0.1.0 --no-install
+# All Linux release binaries at once
+./scripts/install-botparty-streamer.sh --arch linux-all --version v0.1.1 --no-install
+
+# Full multi-platform release set
+./scripts/install-botparty-streamer.sh --arch all --version v0.1.1 --no-install
 ```
 
 Cross-build examples:
@@ -116,10 +119,10 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-v0.1.0-l
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-v0.1.0-linux-arm64 .
 
 # macOS Apple Silicon
-GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-darwin-arm64 .
+GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-X main.version=v0.1.1" -o bin/botparty-streamer-v0.1.1-darwin-arm64 .
 
 # Windows x86_64
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-windows-amd64.exe .
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-X main.version=v0.1.1" -o bin/botparty-streamer-v0.1.1-windows-amd64.exe .
 ```
 
 Note on cross-platform support:
