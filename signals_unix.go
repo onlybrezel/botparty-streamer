@@ -3,10 +3,10 @@
 package main
 
 import (
-"os"
-"syscall"
+	"os"
+	"syscall"
 )
 
 func shutdownSignals() []os.Signal {
-return []os.Signal{os.Interrupt, syscall.SIGTERM}
+	return []os.Signal{os.Interrupt, syscall.SIGTERM}
 }

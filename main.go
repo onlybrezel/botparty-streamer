@@ -8,11 +8,12 @@ import (
 	"io"
 	"log"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,19 +23,31 @@ import (
 var version = "dev"
 
 type runtimeStats struct {
-	droppedQueue          uint64
-	droppedStale          uint64
-	droppedWaitKeyframe   uint64
-	publishedFrames       uint64
-	parseErrors           uint64
-	connectAttempts       uint64
-	reconnects            uint64
-	inputConnections      uint64
-	lastKeyframeUnixNanos int64
+	droppedQueue          atomic.Uint64
+	droppedStale          atomic.Uint64
+	droppedWaitKeyframe   atomic.Uint64
+	publishedFrames       atomic.Uint64
+	parseErrors           atomic.Uint64
+	connectAttempts       atomic.Uint64
+	reconnects            atomic.Uint64
+	inputConnections      atomic.Uint64
+	lastKeyframeUnixNanos atomic.Int64
+}
+
+type runtimeStatsSnapshot struct {
+	DroppedQueue          uint64 `json:"droppedQueue"`
+	DroppedStale          uint64 `json:"droppedStale"`
+	DroppedWaitKeyframe   uint64 `json:"droppedWaitKeyframe"`
+	PublishedFrames       uint64 `json:"publishedFrames"`
+	ParseErrors           uint64 `json:"parseErrors"`
+	ConnectAttempts       uint64 `json:"connectAttempts"`
+	Reconnects            uint64 `json:"reconnects"`
+	InputConnections      uint64 `json:"inputConnections"`
+	LastKeyframeUnixNanos int64  `json:"lastKeyframeUnixNanos"`
 }
 
 func (s *runtimeStats) markKeyframe(t time.Time) {
-	atomic.StoreInt64(&s.lastKeyframeUnixNanos, t.UnixNano())
+	s.lastKeyframeUnixNanos.Store(t.UnixNano())
 }
 
 // spsPPSGlobalCache carries SPS/PPS NALUs across ffmpeg connection restarts so
@@ -119,7 +132,7 @@ func main() {
 			return
 		}
 
-		atomic.AddUint64(&stats.connectAttempts, 1)
+		stats.connectAttempts.Add(1)
 		token, err := provider.Fetch(ctx)
 		if err != nil {
 			attempt++
@@ -151,7 +164,7 @@ func main() {
 		}
 
 		waitForKeyframe = true
-		atomic.AddUint64(&stats.reconnects, 1)
+		stats.reconnects.Add(1)
 		waitOrDone(ctx, cfg.ReconnectMin)
 	}
 }
@@ -172,7 +185,8 @@ func runInputServer(ctx context.Context, cfg Config, frameCh chan EncodedFrame, 
 
 		conn, err := ln.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				if ctx.Err() != nil {
 					return
 				}
@@ -185,7 +199,7 @@ func runInputServer(ctx context.Context, cfg Config, frameCh chan EncodedFrame, 
 			continue
 		}
 
-		atomic.AddUint64(&stats.inputConnections, 1)
+		stats.inputConnections.Add(1)
 		logger.Printf("ffmpeg connected from %s", conn.RemoteAddr())
 		handleInputConnection(ctx, conn, cfg, frameCh, stats, spspps, logger)
 		logger.Printf("ffmpeg disconnected")
@@ -213,7 +227,8 @@ func handleInputConnection(ctx context.Context, conn net.Conn, cfg Config, frame
 
 		nalu, err := reader.NextNALU()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				if frame, key, ok, reason := assembler.FlushIfStale(cfg.FlushTimeout); ok {
 					sendFrame(frameCh, EncodedFrame{Data: frame, Duration: frameDuration, KeyFrame: key, CreatedAt: time.Now()}, stats)
 					if key {
@@ -233,7 +248,7 @@ func handleInputConnection(ctx context.Context, conn net.Conn, cfg Config, frame
 				}
 				return
 			}
-			atomic.AddUint64(&stats.parseErrors, 1)
+			stats.parseErrors.Add(1)
 			logger.Printf("input parse error: %v", err)
 			return
 		}
@@ -264,8 +279,10 @@ func sendFrame(frameCh chan EncodedFrame, frame EncodedFrame, stats *runtimeStat
 
 		select {
 		case <-frameCh:
-			atomic.AddUint64(&stats.droppedQueue, 1)
+			stats.droppedQueue.Add(1)
+			runtime.Gosched()
 		default:
+			runtime.Gosched()
 		}
 	}
 }
@@ -305,13 +322,13 @@ func pumpFrames(
 			if cfg.MaxPublishStale > 0 {
 				age := time.Since(frame.CreatedAt)
 				if age > cfg.MaxPublishStale {
-					atomic.AddUint64(&stats.droppedStale, 1)
+					stats.droppedStale.Add(1)
 					continue
 				}
 			}
 
 			if waitForKeyframe && !frame.KeyFrame {
-				atomic.AddUint64(&stats.droppedWaitKeyframe, 1)
+				stats.droppedWaitKeyframe.Add(1)
 				continue
 			}
 			if frame.KeyFrame {
@@ -323,7 +340,7 @@ func pumpFrames(
 				logger.Printf("write frame failed: %v", err)
 				return err
 			}
-			atomic.AddUint64(&stats.publishedFrames, 1)
+			stats.publishedFrames.Add(1)
 		}
 	}
 }
@@ -338,7 +355,7 @@ func runMetricsLogger(ctx context.Context, cfg Config, frameCh <-chan EncodedFra
 			persistRuntimeStatsSnapshot(cfg.MetricsStateFile, stats, logger)
 			return
 		case <-ticker.C:
-			lastKF := atomic.LoadInt64(&stats.lastKeyframeUnixNanos)
+			lastKF := stats.lastKeyframeUnixNanos.Load()
 			lastKFStr := "never"
 			if lastKF > 0 {
 				lastKFStr = time.Since(time.Unix(0, lastKF)).Round(time.Millisecond).String() + " ago"
@@ -346,14 +363,14 @@ func runMetricsLogger(ctx context.Context, cfg Config, frameCh <-chan EncodedFra
 			logger.Printf(
 				"metrics queue_depth=%d dropped_queue=%d dropped_stale=%d dropped_wait_keyframe=%d published=%d parse_errors=%d connect_attempts=%d reconnects=%d input_connections=%d last_keyframe=%s",
 				len(frameCh),
-				atomic.LoadUint64(&stats.droppedQueue),
-				atomic.LoadUint64(&stats.droppedStale),
-				atomic.LoadUint64(&stats.droppedWaitKeyframe),
-				atomic.LoadUint64(&stats.publishedFrames),
-				atomic.LoadUint64(&stats.parseErrors),
-				atomic.LoadUint64(&stats.connectAttempts),
-				atomic.LoadUint64(&stats.reconnects),
-				atomic.LoadUint64(&stats.inputConnections),
+				stats.droppedQueue.Load(),
+				stats.droppedStale.Load(),
+				stats.droppedWaitKeyframe.Load(),
+				stats.publishedFrames.Load(),
+				stats.parseErrors.Load(),
+				stats.connectAttempts.Load(),
+				stats.reconnects.Load(),
+				stats.inputConnections.Load(),
 				lastKFStr,
 			)
 			persistRuntimeStatsSnapshot(cfg.MetricsStateFile, stats, logger)
@@ -375,21 +392,21 @@ func loadRuntimeStatsSnapshot(path string, logger *log.Logger) *runtimeStats {
 		return stats
 	}
 
-	var snapshot runtimeStats
+	var snapshot runtimeStatsSnapshot
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		logger.Printf("metrics snapshot parse failed: %v", err)
 		return stats
 	}
 
-	atomic.StoreUint64(&stats.droppedQueue, snapshot.droppedQueue)
-	atomic.StoreUint64(&stats.droppedStale, snapshot.droppedStale)
-	atomic.StoreUint64(&stats.droppedWaitKeyframe, snapshot.droppedWaitKeyframe)
-	atomic.StoreUint64(&stats.publishedFrames, snapshot.publishedFrames)
-	atomic.StoreUint64(&stats.parseErrors, snapshot.parseErrors)
-	atomic.StoreUint64(&stats.connectAttempts, snapshot.connectAttempts)
-	atomic.StoreUint64(&stats.reconnects, snapshot.reconnects)
-	atomic.StoreUint64(&stats.inputConnections, snapshot.inputConnections)
-	atomic.StoreInt64(&stats.lastKeyframeUnixNanos, snapshot.lastKeyframeUnixNanos)
+	stats.droppedQueue.Store(snapshot.DroppedQueue)
+	stats.droppedStale.Store(snapshot.DroppedStale)
+	stats.droppedWaitKeyframe.Store(snapshot.DroppedWaitKeyframe)
+	stats.publishedFrames.Store(snapshot.PublishedFrames)
+	stats.parseErrors.Store(snapshot.ParseErrors)
+	stats.connectAttempts.Store(snapshot.ConnectAttempts)
+	stats.reconnects.Store(snapshot.Reconnects)
+	stats.inputConnections.Store(snapshot.InputConnections)
+	stats.lastKeyframeUnixNanos.Store(snapshot.LastKeyframeUnixNanos)
 	logger.Printf("loaded metrics snapshot from %s", path)
 	return stats
 }
@@ -399,16 +416,16 @@ func persistRuntimeStatsSnapshot(path string, stats *runtimeStats, logger *log.L
 		return
 	}
 
-	snapshot := runtimeStats{
-		droppedQueue:          atomic.LoadUint64(&stats.droppedQueue),
-		droppedStale:          atomic.LoadUint64(&stats.droppedStale),
-		droppedWaitKeyframe:   atomic.LoadUint64(&stats.droppedWaitKeyframe),
-		publishedFrames:       atomic.LoadUint64(&stats.publishedFrames),
-		parseErrors:           atomic.LoadUint64(&stats.parseErrors),
-		connectAttempts:       atomic.LoadUint64(&stats.connectAttempts),
-		reconnects:            atomic.LoadUint64(&stats.reconnects),
-		inputConnections:      atomic.LoadUint64(&stats.inputConnections),
-		lastKeyframeUnixNanos: atomic.LoadInt64(&stats.lastKeyframeUnixNanos),
+	snapshot := runtimeStatsSnapshot{
+		DroppedQueue:          stats.droppedQueue.Load(),
+		DroppedStale:          stats.droppedStale.Load(),
+		DroppedWaitKeyframe:   stats.droppedWaitKeyframe.Load(),
+		PublishedFrames:       stats.publishedFrames.Load(),
+		ParseErrors:           stats.parseErrors.Load(),
+		ConnectAttempts:       stats.connectAttempts.Load(),
+		Reconnects:            stats.reconnects.Load(),
+		InputConnections:      stats.inputConnections.Load(),
+		LastKeyframeUnixNanos: stats.lastKeyframeUnixNanos.Load(),
 	}
 
 	payload, err := json.Marshal(snapshot)

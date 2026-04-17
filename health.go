@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync/atomic"
 	"time"
 )
 
@@ -24,7 +23,7 @@ func runHealthServer(ctx context.Context, addr string, stats *runtimeStats, fram
 
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
 		queueDepth := len(frameCh)
-		lastKF := atomic.LoadInt64(&stats.lastKeyframeUnixNanos)
+		lastKF := stats.lastKeyframeUnixNanos.Load()
 		lastKFSec := 0.0
 		if lastKF > 0 {
 			lastKFSec = time.Since(time.Unix(0, lastKF)).Seconds()
@@ -33,35 +32,35 @@ func runHealthServer(ctx context.Context, addr string, stats *runtimeStats, fram
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 		fmt.Fprintf(w, "# HELP botparty_frames_published_total Total frames written to LiveKit\n")
 		fmt.Fprintf(w, "# TYPE botparty_frames_published_total counter\n")
-		fmt.Fprintf(w, "botparty_frames_published_total %d\n", atomic.LoadUint64(&stats.publishedFrames))
+		fmt.Fprintf(w, "botparty_frames_published_total %d\n", stats.publishedFrames.Load())
 
 		fmt.Fprintf(w, "# HELP botparty_frames_dropped_queue_total Frames dropped due to full channel\n")
 		fmt.Fprintf(w, "# TYPE botparty_frames_dropped_queue_total counter\n")
-		fmt.Fprintf(w, "botparty_frames_dropped_queue_total %d\n", atomic.LoadUint64(&stats.droppedQueue))
+		fmt.Fprintf(w, "botparty_frames_dropped_queue_total %d\n", stats.droppedQueue.Load())
 
 		fmt.Fprintf(w, "# HELP botparty_frames_dropped_stale_total Frames dropped because they were too old\n")
 		fmt.Fprintf(w, "# TYPE botparty_frames_dropped_stale_total counter\n")
-		fmt.Fprintf(w, "botparty_frames_dropped_stale_total %d\n", atomic.LoadUint64(&stats.droppedStale))
+		fmt.Fprintf(w, "botparty_frames_dropped_stale_total %d\n", stats.droppedStale.Load())
 
 		fmt.Fprintf(w, "# HELP botparty_frames_dropped_wait_keyframe_total Frames dropped while waiting for keyframe\n")
 		fmt.Fprintf(w, "# TYPE botparty_frames_dropped_wait_keyframe_total counter\n")
-		fmt.Fprintf(w, "botparty_frames_dropped_wait_keyframe_total %d\n", atomic.LoadUint64(&stats.droppedWaitKeyframe))
+		fmt.Fprintf(w, "botparty_frames_dropped_wait_keyframe_total %d\n", stats.droppedWaitKeyframe.Load())
 
 		fmt.Fprintf(w, "# HELP botparty_parse_errors_total NAL unit parse errors\n")
 		fmt.Fprintf(w, "# TYPE botparty_parse_errors_total counter\n")
-		fmt.Fprintf(w, "botparty_parse_errors_total %d\n", atomic.LoadUint64(&stats.parseErrors))
+		fmt.Fprintf(w, "botparty_parse_errors_total %d\n", stats.parseErrors.Load())
 
 		fmt.Fprintf(w, "# HELP botparty_connect_attempts_total Total LiveKit connection attempts\n")
 		fmt.Fprintf(w, "# TYPE botparty_connect_attempts_total counter\n")
-		fmt.Fprintf(w, "botparty_connect_attempts_total %d\n", atomic.LoadUint64(&stats.connectAttempts))
+		fmt.Fprintf(w, "botparty_connect_attempts_total %d\n", stats.connectAttempts.Load())
 
 		fmt.Fprintf(w, "# HELP botparty_reconnects_total Total LiveKit reconnections\n")
 		fmt.Fprintf(w, "# TYPE botparty_reconnects_total counter\n")
-		fmt.Fprintf(w, "botparty_reconnects_total %d\n", atomic.LoadUint64(&stats.reconnects))
+		fmt.Fprintf(w, "botparty_reconnects_total %d\n", stats.reconnects.Load())
 
 		fmt.Fprintf(w, "# HELP botparty_input_connections_total Total ffmpeg input TCP connections\n")
 		fmt.Fprintf(w, "# TYPE botparty_input_connections_total counter\n")
-		fmt.Fprintf(w, "botparty_input_connections_total %d\n", atomic.LoadUint64(&stats.inputConnections))
+		fmt.Fprintf(w, "botparty_input_connections_total %d\n", stats.inputConnections.Load())
 
 		fmt.Fprintf(w, "# HELP botparty_frame_queue_depth Current frame channel depth\n")
 		fmt.Fprintf(w, "# TYPE botparty_frame_queue_depth gauge\n")
@@ -72,9 +71,15 @@ func runHealthServer(ctx context.Context, addr string, stats *runtimeStats, fram
 		fmt.Fprintf(w, "botparty_last_keyframe_seconds_ago %.3f\n", lastKFSec)
 	})
 
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startedAt := time.Now()
+		mux.ServeHTTP(w, r)
+		logger.Printf("health request path=%s method=%s duration=%s remote=%s", r.URL.Path, r.Method, time.Since(startedAt), r.RemoteAddr)
+	})
+
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -110,7 +111,23 @@ func (p HTTPTokenProvider) Fetch(ctx context.Context) (string, error) {
 		req.Header.Set("X-Device-Secret", p.DeviceSecret)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{
+		Timeout: p.Timeout,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   minDuration(p.Timeout, 10*time.Second),
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			TLSHandshakeTimeout:   minDuration(p.Timeout, 10*time.Second),
+			ResponseHeaderTimeout: minDuration(p.Timeout, 10*time.Second),
+			ExpectContinueTimeout: 1 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request token: %w", err)
 	}
@@ -129,4 +146,14 @@ func (p HTTPTokenProvider) Fetch(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("token response did not contain token")
 	}
 	return tr.Token, nil
+}
+
+func minDuration(a time.Duration, b time.Duration) time.Duration {
+	if a <= 0 {
+		return b
+	}
+	if a < b {
+		return a
+	}
+	return b
 }

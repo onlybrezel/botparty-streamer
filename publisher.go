@@ -24,12 +24,6 @@ func ConnectLiveKit(cfg Config, token string, logger *log.Logger) (*LiveKitSessi
 	disconnected := make(chan struct{})
 	var disconnectedOnce sync.Once
 	cb := &lksdk.RoomCallback{
-		OnDisconnected: func() {
-			logger.Printf("livekit disconnected")
-			disconnectedOnce.Do(func() {
-				close(disconnected)
-			})
-		},
 		OnDisconnectedWithReason: func(reason lksdk.DisconnectionReason) {
 			logger.Printf("livekit disconnected reason=%s", reason)
 			disconnectedOnce.Do(func() {
