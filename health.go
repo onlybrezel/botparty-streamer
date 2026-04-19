@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
-func runHealthServer(ctx context.Context, addr string, stats *runtimeStats, frameCh <-chan EncodedFrame, logger *log.Logger) {
+func runHealthServer(ctx context.Context, addr string, authToken string, stats *runtimeStats, frameCh <-chan EncodedFrame, logger *log.Logger) {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +73,16 @@ func runHealthServer(ctx context.Context, addr string, stats *runtimeStats, fram
 	})
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authToken != "" {
+			auth := strings.TrimSpace(r.Header.Get("Authorization"))
+			expected := "Bearer " + authToken
+			if auth != expected {
+				w.WriteHeader(http.StatusUnauthorized)
+				_, _ = w.Write([]byte("unauthorized\n"))
+				return
+			}
+		}
+
 		startedAt := time.Now()
 		mux.ServeHTTP(w, r)
 		logger.Printf("health request path=%s method=%s duration=%s remote=%s", r.URL.Path, r.Method, time.Since(startedAt), r.RemoteAddr)

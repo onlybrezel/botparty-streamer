@@ -4,7 +4,7 @@ set -euo pipefail
 TARGET="${BOTPARTY_STREAMER_TARGET:-/home/pi/bin/botparty-streamer}"
 ARCH="native"
 INSTALL="true"
-VERSION="v0.1.1"
+VERSION="v0.1.3"
 LDFLAGS="-s -w -X main.version=${VERSION}"
 
 usage() {

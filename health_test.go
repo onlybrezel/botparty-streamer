@@ -23,7 +23,7 @@ func TestRunHealthServer_ShutsDownOnCancel(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runHealthServer(ctx, addr, &runtimeStats{}, make(chan EncodedFrame, 1), log.New(io.Discard, "", 0))
+		runHealthServer(ctx, addr, "", &runtimeStats{}, make(chan EncodedFrame, 1), log.New(io.Discard, "", 0))
 		close(done)
 	}()
 

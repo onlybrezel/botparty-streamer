@@ -120,7 +120,7 @@ func main() {
 	go runInputServer(ctx, cfg, frameCh, stats, spspps, logger)
 	go runMetricsLogger(ctx, cfg, frameCh, stats, logger)
 	if cfg.HealthAddr != "" {
-		go runHealthServer(ctx, cfg.HealthAddr, stats, frameCh, logger)
+		go runHealthServer(ctx, cfg.HealthAddr, cfg.HealthAuthToken, stats, frameCh, logger)
 	}
 
 	attempt := 0

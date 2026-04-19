@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// Config defines runtime options for the streamer process.
 type Config struct {
 	LiveKitURL      string
 	RoomName        string
@@ -31,6 +32,8 @@ type Config struct {
 	AllowRemoteInput bool
 
 	HealthAddr string
+	HealthAuthToken string
+	AllowRemoteHealth bool
 
 	StaticToken string
 	TokenFile   string
@@ -46,6 +49,7 @@ type Config struct {
 	ReconnectMax time.Duration
 }
 
+// LoadConfig loads environment-based configuration and validates bounds.
 func LoadConfig() (Config, error) {
 	configFile := strings.TrimSpace(os.Getenv("CONFIG_FILE"))
 	if configFile != "" {
@@ -74,6 +78,8 @@ func LoadConfig() (Config, error) {
 		AllowRemoteInput: getenvBool("ALLOW_REMOTE_INPUT", false),
 
 		HealthAddr: getenvDefault("HEALTH_ADDR", "127.0.0.1:9090"),
+		HealthAuthToken: strings.TrimSpace(os.Getenv("HEALTH_AUTH_TOKEN")),
+		AllowRemoteHealth: getenvBool("ALLOW_REMOTE_HEALTH", false),
 
 		StaticToken:     strings.TrimSpace(os.Getenv("LK_TOKEN")),
 		TokenFile:       strings.TrimSpace(os.Getenv("TOKEN_FILE")),
@@ -130,6 +136,14 @@ func LoadConfig() (Config, error) {
 	}
 	if !cfg.AllowRemoteInput && !isLoopbackHost(host) {
 		return cfg, fmt.Errorf("INPUT_LISTEN_ADDR=%q is not loopback; set ALLOW_REMOTE_INPUT=true to allow external binding", cfg.InputListenAddr)
+	}
+
+	healthHost, _, err := net.SplitHostPort(cfg.HealthAddr)
+	if err != nil {
+		return cfg, fmt.Errorf("HEALTH_ADDR must be host:port, got %q", cfg.HealthAddr)
+	}
+	if !cfg.AllowRemoteHealth && !isLoopbackHost(healthHost) {
+		return cfg, fmt.Errorf("HEALTH_ADDR=%q is not loopback; set ALLOW_REMOTE_HEALTH=true to allow external binding", cfg.HealthAddr)
 	}
 
 	if cfg.TokenTTLSeconds < 60 {
