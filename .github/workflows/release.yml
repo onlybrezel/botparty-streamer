@@ -30,6 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
+          find "$(go env GOMODCACHE)" -type f -exec chmod u+w {} +
           go run github.com/google/go-licenses@v1.6.0 save ./cmd/botparty-streamer \
             --save_path=/tmp/botparty-third-party-licenses
           targets=(
