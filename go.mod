@@ -3,7 +3,7 @@ module github.com/onlybrezel/botparty-streamer
 go 1.26
 
 require (
-	github.com/livekit/protocol v1.49.0
+	github.com/livekit/protocol v1.50.4
 	github.com/livekit/server-sdk-go/v2 v2.18.1
 	github.com/pion/webrtc/v4 v4.2.15
 )
