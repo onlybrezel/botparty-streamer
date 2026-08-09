@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build archives
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          go run github.com/google/go-licenses@v1.6.0 save ./cmd/botparty-streamer \
+            --save_path=/tmp/botparty-third-party-licenses
+          targets=(
+            linux/amd64
+            linux/arm64
+            linux/arm/7
+            darwin/amd64
+            darwin/arm64
+            windows/amd64
+            windows/arm64
+          )
+
+          for target in "${targets[@]}"; do
+            IFS=/ read -r goos goarch goarm <<< "$target"
+            name="botparty-streamer-${VERSION}-${goos}-${goarch}"
+            if [[ -n "${goarm:-}" ]]; then
+              name="${name}v${goarm}"
+            fi
+
+            executable="${name}"
+            if [[ "$goos" == windows ]]; then
+              executable="${executable}.exe"
+            fi
+
+            package_dir="dist/${name}"
+            mkdir -p "${package_dir}/third_party_licenses"
+
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" GOARM="${goarm:-}" \
+              go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+              -o "${package_dir}/${executable}" ./cmd/botparty-streamer
+            cp LICENSE README.md THIRD_PARTY_NOTICES.md "${package_dir}/"
+            cp -R /tmp/botparty-third-party-licenses/. "${package_dir}/third_party_licenses/"
+
+            if [[ "$goos" == windows ]]; then
+              (cd dist && zip -qr "${name}.zip" "${name}")
+            else
+              tar -C dist -czf "dist/${name}.tar.gz" "${name}"
+            fi
+            find "${package_dir}" -type f -delete
+            find "${package_dir}" -depth -type d -empty -delete
+          done
+
+          (cd dist && sha256sum ./* > SHA256SUMS)
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --generate-notes --verify-tag

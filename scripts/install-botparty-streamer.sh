@@ -1,50 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET="${BOTPARTY_STREAMER_TARGET:-/home/pi/bin/botparty-streamer}"
+TARGET="${BOTPARTY_STREAMER_TARGET:-/usr/local/bin/botparty-streamer}"
 ARCH="native"
 INSTALL="true"
-VERSION="v0.1.3"
-LDFLAGS="-s -w -X main.version=${VERSION}"
+VERSION="${BOTPARTY_STREAMER_VERSION:-$(git describe --tags --always --dirty 2>/dev/null || printf 'dev')}"
+OUTPUT_DIR="${BOTPARTY_STREAMER_OUTPUT_DIR:-dist}"
 
 usage() {
   cat >&2 <<'EOF'
-usage: install-botparty-streamer.sh [--arch native|amd64|arm64|arm|darwin-amd64|darwin-arm64|windows-amd64|windows-arm64|linux-all|all] [--version v0.1.1] [--no-install]
+usage: install-botparty-streamer.sh [options]
 
-Defaults:
-  --arch native
-  install native binary to /home/pi/bin/botparty-streamer
+Options:
+  --arch TARGET     native, linux-amd64, linux-arm64, linux-arm,
+                    darwin-amd64, darwin-arm64, windows-amd64,
+                    windows-arm64, linux-all or all
+  --version VERSION version embedded in the binary (default: current Git tag)
+  --target PATH     installation path (default: /usr/local/bin/botparty-streamer)
+  --no-install      build without installing; required for cross-builds
+  -h, --help        show this help
 
-Cross-build targets:
-  amd64           linux/amd64
-  arm64           linux/arm64   (Raspberry Pi 4/5 64-bit)
-  arm             linux/armv7   (Raspberry Pi 2/3 32-bit)
-  darwin-amd64    macOS Intel
-  darwin-arm64    macOS Apple Silicon
-  windows-amd64   Windows x86_64
-  windows-arm64   Windows ARM64
-  linux-all       all Linux release targets
-  all             all supported release targets
-
-Examples:
-  ./scripts/install-botparty-streamer.sh
-  ./scripts/install-botparty-streamer.sh --arch amd64 --version v0.1.1 --no-install
-  ./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.1 --no-install
-  ./scripts/install-botparty-streamer.sh --arch arm   --version v0.1.1 --no-install
-  ./scripts/install-botparty-streamer.sh --arch linux-all --version v0.1.1 --no-install
-  ./scripts/install-botparty-streamer.sh --arch all       --version v0.1.1 --no-install
+Short aliases amd64, arm64 and arm select the matching Linux target.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --arch)
-      ARCH="${2:-}"
+      ARCH="${2:?missing value for --arch}"
       shift 2
       ;;
     --version)
-      VERSION="${2:-}"
-      LDFLAGS="-s -w -X main.version=${VERSION}"
+      VERSION="${2:?missing value for --version}"
+      shift 2
+      ;;
+    --target)
+      TARGET="${2:?missing value for --target}"
       shift 2
       ;;
     --no-install)
@@ -63,8 +54,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! -f "go.mod" ]] || ! grep -q '^module botparty-streamer$' go.mod; then
-  echo "Run this script from the botparty-streamer repository root." >&2
+if [[ ! -f go.mod ]] || ! grep -q '^module github.com/onlybrezel/botparty-streamer$' go.mod; then
+  echo "run this script from the repository root" >&2
   exit 1
 fi
 
@@ -73,15 +64,8 @@ if ! command -v go >/dev/null 2>&1; then
   exit 1
 fi
 
-mkdir -p bin
-
-build_native() {
-  go build -ldflags "$LDFLAGS" -o bin/botparty-streamer .
-  if [[ ! -x "bin/botparty-streamer" ]]; then
-    echo "build failed: bin/botparty-streamer missing" >&2
-    exit 1
-  fi
-}
+mkdir -p "$OUTPUT_DIR"
+LDFLAGS="-s -w -X main.version=${VERSION}"
 
 build_target() {
   local goos="$1"
@@ -89,47 +73,41 @@ build_target() {
   local output="$3"
   local goarm="${4:-}"
 
-  if [[ -n "$goarm" ]]; then
-    CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" \
-      go build -ldflags "$LDFLAGS" -o "$output" .
-    return
-  fi
-
-  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
-    go build -ldflags "$LDFLAGS" -o "$output" .
+  CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" GOARM="$goarm" \
+    go build -trimpath -ldflags "$LDFLAGS" -o "$output" ./cmd/botparty-streamer
 }
 
 build_linux_amd64() {
-  build_target linux amd64 "bin/botparty-streamer-${VERSION}-linux-amd64"
+  build_target linux amd64 "$OUTPUT_DIR/botparty-streamer-${VERSION}-linux-amd64"
 }
 
 build_linux_arm64() {
-  build_target linux arm64 "bin/botparty-streamer-${VERSION}-linux-arm64"
+  build_target linux arm64 "$OUTPUT_DIR/botparty-streamer-${VERSION}-linux-arm64"
 }
 
 build_linux_arm() {
-  build_target linux arm "bin/botparty-streamer-${VERSION}-linux-arm" 7
+  build_target linux arm "$OUTPUT_DIR/botparty-streamer-${VERSION}-linux-armv7" 7
 }
 
 build_darwin_amd64() {
-  build_target darwin amd64 "bin/botparty-streamer-${VERSION}-darwin-amd64"
+  build_target darwin amd64 "$OUTPUT_DIR/botparty-streamer-${VERSION}-darwin-amd64"
 }
 
 build_darwin_arm64() {
-  build_target darwin arm64 "bin/botparty-streamer-${VERSION}-darwin-arm64"
+  build_target darwin arm64 "$OUTPUT_DIR/botparty-streamer-${VERSION}-darwin-arm64"
 }
 
 build_windows_amd64() {
-  build_target windows amd64 "bin/botparty-streamer-${VERSION}-windows-amd64.exe"
+  build_target windows amd64 "$OUTPUT_DIR/botparty-streamer-${VERSION}-windows-amd64.exe"
 }
 
 build_windows_arm64() {
-  build_target windows arm64 "bin/botparty-streamer-${VERSION}-windows-arm64.exe"
+  build_target windows arm64 "$OUTPUT_DIR/botparty-streamer-${VERSION}-windows-arm64.exe"
 }
 
 case "$ARCH" in
   native)
-    build_native
+    go build -trimpath -ldflags "$LDFLAGS" -o "$OUTPUT_DIR/botparty-streamer" ./cmd/botparty-streamer
     ;;
   amd64|linux-amd64)
     build_linux_amd64
@@ -167,26 +145,32 @@ case "$ARCH" in
     build_windows_arm64
     ;;
   *)
-    echo "unsupported arch: $ARCH" >&2
+    echo "unsupported target: $ARCH" >&2
     usage
     exit 1
     ;;
 esac
 
-if [[ "$INSTALL" != "true" ]]; then
-  echo "Build complete for arch=$ARCH (no install requested)" >&2
+if [[ "$INSTALL" != true ]]; then
+  echo "build complete: $OUTPUT_DIR" >&2
   exit 0
 fi
 
-if [[ "$ARCH" != "native" ]]; then
-  echo "install step is only supported with --arch native" >&2
-  echo "Use --no-install when building cross targets." >&2
+if [[ "$ARCH" != native ]]; then
+  echo "cross-builds require --no-install" >&2
   exit 1
 fi
 
-TARGET_DIR="$(dirname "$TARGET")"
-mkdir -p "$TARGET_DIR"
-install -m 0755 bin/botparty-streamer "$TARGET" 2>/dev/null || {
-  sudo install -m 0755 bin/botparty-streamer "$TARGET"
-}
-echo "Installed $TARGET from $(pwd)/bin/botparty-streamer" >&2
+SOURCE="$OUTPUT_DIR/botparty-streamer"
+if install -m 0755 "$SOURCE" "$TARGET" 2>/dev/null; then
+  echo "installed $TARGET" >&2
+  exit 0
+fi
+
+if ! command -v sudo >/dev/null 2>&1; then
+  echo "cannot write $TARGET; choose a writable path with --target" >&2
+  exit 1
+fi
+
+sudo install -m 0755 "$SOURCE" "$TARGET"
+echo "installed $TARGET" >&2

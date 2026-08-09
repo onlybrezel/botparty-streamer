@@ -18,6 +18,7 @@ type LiveKitSession struct {
 	pub          *lksdk.LocalTrackPublication
 	disconnected chan struct{}
 	once         sync.Once
+	closeFn      func()
 }
 
 func ConnectLiveKit(cfg Config, token string, logger *log.Logger) (*LiveKitSession, error) {
@@ -54,7 +55,19 @@ func ConnectLiveKit(cfg Config, token string, logger *log.Logger) (*LiveKitSessi
 
 	logger.Printf("livekit connected: room=%s identity=%s track=%s", cfg.RoomName, cfg.Identity, cfg.TrackName)
 
-	return &LiveKitSession{Room: room, Track: track, pub: pub, disconnected: disconnected}, nil
+	session := &LiveKitSession{Room: room, Track: track, pub: pub, disconnected: disconnected}
+	session.closeFn = func() {
+		if session.Room == nil {
+			return
+		}
+		if session.pub != nil {
+			// Unpublishing avoids waiting for LiveKit's disconnect timeout.
+			_ = session.Room.LocalParticipant.UnpublishTrack(session.pub.SID())
+		}
+		session.Room.Disconnect()
+	}
+
+	return session, nil
 }
 
 // WriteFrame writes an encoded H264 frame to the LiveKit track.
@@ -81,13 +94,8 @@ func (s *LiveKitSession) Disconnected() <-chan struct{} {
 
 func (s *LiveKitSession) Close() {
 	s.once.Do(func() {
-		if s.Room != nil {
-			if s.pub != nil {
-				// Explicitly unpublish the track before disconnecting so LiveKit
-				// notifies viewers sooner instead of relying on the disconnect timeout.
-				_ = s.Room.LocalParticipant.UnpublishTrack(s.pub.SID())
-			}
-			s.Room.Disconnect()
+		if s.closeFn != nil {
+			s.closeFn()
 		}
 	})
 }

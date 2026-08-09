@@ -321,15 +321,49 @@ func TestDecodeRBSP_NoEscape(t *testing.T) {
 	}
 }
 
+func BenchmarkNextNALU(b *testing.B) {
+	nalu := append([]byte{0x41}, bytes.Repeat([]byte{0xAB}, 255)...)
+	data := makeStream(nalu, nalu, nalu, nalu, nalu, nalu, nalu, nalu)
+	b.SetBytes(int64(len(data)))
+
+	for i := 0; i < b.N; i++ {
+		reader := NewAnnexBReader(bytes.NewReader(data))
+		for {
+			if _, err := reader.NextNALU(); err != nil {
+				if err == io.EOF {
+					break
+				}
+				b.Fatalf("NextNALU failed: %v", err)
+			}
+		}
+	}
+}
+
+func BenchmarkAccessUnitAssemblerPush(b *testing.B) {
+	aud := []byte{0x09, 0xF0}
+	sps := []byte{0x67, 0x42, 0x00, 0x1E}
+	pps := []byte{0x68, 0xCE, 0x38, 0x80}
+	idr := append([]byte{0x65}, bytes.Repeat([]byte{0x7F}, 900)...)
+
+	for i := 0; i < b.N; i++ {
+		assembler := NewAccessUnitAssembler(64, 2*1024*1024)
+		assembler.Push(aud)
+		assembler.Push(sps)
+		assembler.Push(pps)
+		assembler.Push(idr)
+		assembler.Push(aud)
+	}
+}
+
 func TestBitReader_ReadUE(t *testing.T) {
 	cases := []struct {
 		bits []byte
 		want uint
 	}{
-		{[]byte{0b1_0000000}, 0},           // "1" → 0
-		{[]byte{0b010_00000}, 1},           // "010" → 1
-		{[]byte{0b011_00000}, 2},           // "011" → 2
-		{[]byte{0b00100_000}, 3},           // "00100" → 3
+		{[]byte{0b1_0000000}, 0}, // "1" → 0
+		{[]byte{0b010_00000}, 1}, // "010" → 1
+		{[]byte{0b011_00000}, 2}, // "011" → 2
+		{[]byte{0b00100_000}, 3}, // "00100" → 3
 	}
 	for _, tc := range cases {
 		br := newBitReader(tc.bits)

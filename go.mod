@@ -1,4 +1,4 @@
-module botparty-streamer
+module github.com/onlybrezel/botparty-streamer
 
 go 1.24.2
 

@@ -1,227 +1,125 @@
 # botparty-streamer
 
-A small, cross-platform Go tool that accepts already H.264-encoded Annex-B video from ffmpeg over TCP and publishes it as a normal LiveKit participant.
+[![CI](https://github.com/onlybrezel/botparty-streamer/actions/workflows/ci.yml/badge.svg)](https://github.com/onlybrezel/botparty-streamer/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/onlybrezel/botparty-streamer/actions/workflows/codeql.yml/badge.svg)](https://github.com/onlybrezel/botparty-streamer/actions/workflows/codeql.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## Architecture
+botparty-streamer publishes an H.264 Annex-B stream from ffmpeg to a LiveKit room. It runs as a regular LiveKit participant and keeps capture and encoding outside the process.
 
-- Input: exactly one source `tcp://127.0.0.1:5004` (Annex-B NAL units).
-- ffmpeg handles capture + encoding (hardware/software depending on platform).
-- The Go tool only handles:
-  - Annex-B parsing
-  - Access-unit assembly
-  - SPS/PPS handling before IDR frames
-  - Publishing as H.264 video track to LiveKit
-  - Reconnect, logging, clean shutdown
-- Token:
-  - No API key/secret on the device
-  - Device uses short-lived tokens (via `LK_TOKEN` directly or via `TOKEN_ENDPOINT`)
+## How it works
 
-Clear separation of concerns:
-
-- ffmpeg = encoder
-- botparty-streamer = LiveKit publisher
-- Backend = token issuer
-
-## Hardening over the prototype
-
-- Removed destructive `bytes.Trim(..., "\x00")` logic from the NAL parser.
-- TCP chunking is transparent; NAL boundaries are detected exclusively via Annex-B start codes.
-- AU guards added:
-  - `AU_MAX_NALUS`
-  - `AU_MAX_BYTES`
-  - Flush on uncertain slice boundary instead of long accumulation.
-- Queue model tuned for low-latency:
-  - Very small queue (`FRAME_CHAN_SIZE` default `4`)
-  - Strict latest-frame / drop-oldest
-  - Publish-drop for stale frames (`MAX_PUBLISH_STALE_MS`).
-- Reader/flush timeouts tightened:
-  - `INPUT_READ_TIMEOUT_MS=500`
-  - `FRAME_FLUSH_TIMEOUT_MS=50`
-- Reconnect rebase:
-  - Queue is drained on session restart
-  - Publisher waits for keyframe again.
-- Session close path cleaned:
-  - No per-session background goroutine waiting on global shutdown signal.
-- Runtime metrics in log:
-  - queue depth
-  - dropped frames (queue/stale/wait-keyframe)
-  - reconnect count
-  - parse errors
-  - last keyframe seen
-- Token backend fail-closed:
-  - Startup aborts if neither bearer nor device secrets are set.
-
-## Directory layout
-
-```
-.
-├── go.mod
-├── main.go
-├── config.go
-├── token_client.go
-├── annexb_reader.go
-├── publisher.go
-├── signals_unix.go
-├── signals_windows.go
-├── .env.example
-├── scripts/
-│   ├── install-botparty-streamer.sh
-│   └── fetch_token.sh
-├── deploy/
-│   └── systemd/
-│       ├── botparty-streamer.service
-│       └── ffmpeg-h264-feed.service
-└── examples/
-    └── token-backend-node/
-        ├── package.json
-        ├── .env.example
-        └── server.js
+```text
+camera -> ffmpeg -> TCP Annex-B H.264 -> botparty-streamer -> LiveKit
 ```
 
-## Build
+- ffmpeg handles capture and encoding.
+- botparty-streamer assembles access units and publishes the video track.
+- A backend issues short-lived LiveKit tokens. API secrets do not need to be stored on the streaming device.
 
-Prerequisite: Go 1.22+
+The input listener accepts one ffmpeg connection at a time. It binds to `127.0.0.1:5004` by default and rejects non-loopback addresses unless explicitly enabled.
+
+## Requirements
+
+- Go 1.24 or newer when building from source
+- ffmpeg with an H.264 encoder
+- A LiveKit server and a token with permission to join and publish
+
+## Install
+
+Download an archive from [GitHub Releases](https://github.com/onlybrezel/botparty-streamer/releases), or build the current checkout:
 
 ```bash
-go mod tidy
-go build -o bin/botparty-streamer .
-```
-
-Build + system-wide installation in one step:
-
-```bash
+git clone https://github.com/onlybrezel/botparty-streamer.git
+cd botparty-streamer
 ./scripts/install-botparty-streamer.sh
 ```
 
-Targeted builds via the script:
+The installer builds the native binary and installs it as `/usr/local/bin/botparty-streamer`. Use a different destination when needed:
 
 ```bash
-# Linux AMD64 only
-./scripts/install-botparty-streamer.sh --arch amd64 --version v0.1.0 --no-install
-
-# Linux ARM64 only (Raspberry Pi 64-bit)
-./scripts/install-botparty-streamer.sh --arch arm64 --version v0.1.0 --no-install
-
-# All Linux release binaries at once
-./scripts/install-botparty-streamer.sh --arch linux-all --version v0.1.1 --no-install
-
-# Full multi-platform release set
-./scripts/install-botparty-streamer.sh --arch all --version v0.1.1 --no-install
+./scripts/install-botparty-streamer.sh --target "$HOME/.local/bin/botparty-streamer"
 ```
 
-Cross-build examples:
+A build without installation:
 
 ```bash
-# Linux x86_64
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/botparty-streamer-v0.1.0-linux-amd64 .
-
-# Linux ARM64 (e.g. Raspberry Pi OS 64-bit)
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o bin/botparty-streamer-v0.1.0-linux-arm64 .
-
-# macOS Apple Silicon
-GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -ldflags "-X main.version=v0.1.1" -o bin/botparty-streamer-v0.1.1-darwin-arm64 .
-
-# Windows x86_64
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags "-X main.version=v0.1.1" -o bin/botparty-streamer-v0.1.1-windows-amd64.exe .
+go build -o dist/botparty-streamer ./cmd/botparty-streamer
 ```
 
-Note on cross-platform support:
+Cross-builds are available through the same script:
 
-- Signal handling is split via build tags (`signals_unix.go`, `signals_windows.go`).
-- The runtime itself is platform-neutral as long as ffmpeg provides H.264 Annex-B on the target platform.
-- Real interop and build validation on each target platform is required before production use.
+```bash
+./scripts/install-botparty-streamer.sh --arch linux-arm64 --no-install
+./scripts/install-botparty-streamer.sh --arch linux-all --no-install
+./scripts/install-botparty-streamer.sh --arch all --no-install
+```
+
+The version defaults to the current Git tag or commit. Override it with `--version` for a local release build.
 
 ## Configuration
 
+Copy the example and set the LiveKit connection details:
+
 ```bash
 cp .env.example .env
-```
-
-Key low-latency parameters:
-
-- `FRAME_CHAN_SIZE=4` (keep small)
-- `MAX_PUBLISH_STALE_MS=250` (discard old frames)
-- `AU_MAX_NALUS=64`
-- `AU_MAX_BYTES=2097152`
-- `INPUT_READ_TIMEOUT_MS=500`
-- `FRAME_FLUSH_TIMEOUT_MS=50`
-- `METRICS_STATE_FILE=/var/lib/botparty-streamer/metrics.json` (optional counter persistence across restarts)
-
-Input bind protection:
-
-- Default is loopback-only (`INPUT_LISTEN_ADDR=127.0.0.1:5004`).
-- Non-loopback binding is rejected by default.
-- Set `ALLOW_REMOTE_INPUT=true` to explicitly allow external binding.
-
-Recommended: fetch tokens from the backend (no API key/secret on device):
-
-- `TOKEN_ENDPOINT`
-- `DEVICE_ID`
-- `DEVICE_SECRET`
-- `TOKEN_TTL_SECONDS` (default `900`)
-- `METRICS_STATE_FILE` (optional counter snapshot path for restart retention)
-
-Direct mode via `LK_TOKEN` is supported; keep tokens short-lived.
-You can also load a static token from `TOKEN_FILE`.
-
-For larger deployments, `CONFIG_FILE` can point to an env-style file (`KEY=VALUE`) that is loaded before normal environment resolution.
-
-## Startup order
-
-1. Start the token backend.
-2. Start the publisher.
-3. Start ffmpeg writing to `tcp://127.0.0.1:5004`.
-
-Start publisher (with env):
-
-```bash
 set -a
-source .env
+. ./.env
 set +a
-./bin/botparty-streamer
+botparty-streamer
 ```
 
-Optional token-fetch script:
+Required values:
+
+| Variable | Purpose |
+| --- | --- |
+| `LK_URL` | LiveKit WebSocket URL |
+| `LK_ROOM` | Room name |
+| `LK_IDENTITY` | Participant identity |
+| `LK_TOKEN`, `TOKEN_FILE` or `TOKEN_ENDPOINT` | Token source; exactly one source is normally used |
+
+Common options:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `LK_NAME` | `LK_IDENTITY` | Display name |
+| `LK_TRACK_NAME` | `camera` | Published track name |
+| `INPUT_LISTEN_ADDR` | `127.0.0.1:5004` | TCP input address |
+| `VIDEO_FPS` | `30` | Frame duration used for publishing |
+| `FRAME_CHAN_SIZE` | `4` | Low-latency frame queue size |
+| `MAX_PUBLISH_STALE_MS` | `250` | Maximum frame age before dropping |
+| `HEALTH_ADDR` | `127.0.0.1:9090` | Health and metrics listener |
+| `HEALTH_AUTH_TOKEN` | empty | Bearer token for health and metrics endpoints |
+| `METRICS_STATE_FILE` | empty | Optional counter snapshot file |
+| `CONFIG_FILE` | empty | Optional env-style configuration file |
+
+Remote input and health listeners are refused by default. Set `ALLOW_REMOTE_INPUT=true` or `ALLOW_REMOTE_HEALTH=true` only when the corresponding listener should be reachable from another host. Protect a remote health endpoint with `HEALTH_AUTH_TOKEN` and network-level access controls.
+
+The full set of options and defaults is listed in [`.env.example`](.env.example).
+
+### Token endpoint
+
+Using a token endpoint keeps LiveKit API credentials off the streaming device:
 
 ```bash
-set -a
-source .env
-set +a
-./scripts/fetch_token.sh /tmp/lk-token.env
-set -a
-source /tmp/lk-token.env
-set +a
-./bin/botparty-streamer
+TOKEN_ENDPOINT=https://tokens.example.com/livekit
+DEVICE_ID=robot-1
+DEVICE_SECRET=replace-with-strong-secret
+TOKEN_TTL_SECONDS=300
 ```
 
-## ffmpeg examples (no re-encoding in the Go tool)
+botparty-streamer sends a JSON request containing the room, identity, display name and requested TTL. The endpoint must return:
 
-Important: output must be Annex-B H.264 via TCP localhost.
-
-### Raspberry Pi 4 (h264_v4l2m2m)
-
-```bash
-ffmpeg -hide_banner -loglevel warning \
-  -f v4l2 -framerate 30 -video_size 1280x720 -i /dev/video0 \
-  -an \
-  -c:v h264_v4l2m2m -pix_fmt yuv420p \
-  -g 60 -keyint_min 60 -bf 0 -tune zerolatency \
-  -f h264 tcp://127.0.0.1:5004
+```json
+{"token":"..."}
 ```
 
-### Linux x86_64 (VAAPI)
+A small Node.js implementation is available in [`examples/token-backend-node`](examples/token-backend-node). It is intended as a starting point and refuses to start without bearer or device authentication.
 
-```bash
-ffmpeg -hide_banner -loglevel warning \
-  -f v4l2 -framerate 30 -video_size 1280x720 -i /dev/video0 \
-  -an \
-  -vaapi_device /dev/dri/renderD128 \
-  -vf 'format=nv12,hwupload' \
-  -c:v h264_vaapi -g 60 -bf 0 \
-  -f h264 tcp://127.0.0.1:5004
-```
+## Run ffmpeg
 
-Software fallback (Linux):
+The output must be raw H.264 in Annex-B format over TCP. Start botparty-streamer before ffmpeg.
+
+### Linux with Video4Linux and x264
 
 ```bash
 ffmpeg -hide_banner -loglevel warning \
@@ -231,77 +129,61 @@ ffmpeg -hide_banner -loglevel warning \
   -f h264 tcp://127.0.0.1:5004
 ```
 
-### macOS (VideoToolbox)
+### Raspberry Pi with V4L2 M2M
 
 ```bash
 ffmpeg -hide_banner -loglevel warning \
-  -f avfoundation -framerate 30 -video_size 1280x720 -i '0:none' \
-  -an \
-  -c:v h264_videotoolbox -realtime true \
+  -f v4l2 -framerate 30 -video_size 1280x720 -i /dev/video0 \
+  -an -c:v h264_v4l2m2m -pix_fmt yuv420p \
   -g 60 -bf 0 \
   -f h264 tcp://127.0.0.1:5004
 ```
 
-### Windows (NVENC / fallback)
+### macOS with VideoToolbox
 
 ```bash
-ffmpeg -hide_banner -loglevel warning ^
-  -f dshow -framerate 30 -video_size 1280x720 -i video="Integrated Camera" ^
-  -an ^
-  -c:v h264_nvenc -preset p4 -tune ll -g 60 -bf 0 ^
+ffmpeg -hide_banner -loglevel warning \
+  -f avfoundation -framerate 30 -video_size 1280x720 -i '0:none' \
+  -an -c:v h264_videotoolbox -realtime true \
+  -g 60 -bf 0 \
   -f h264 tcp://127.0.0.1:5004
 ```
 
-AMF/QSV/software are interchangeable as long as the output remains H.264 Annex-B.
+Other hardware encoders work as long as they produce H.264 Annex-B without B-frames. A short GOP reduces recovery time after reconnects.
 
-## systemd (Linux)
+## Health and metrics
 
-Publisher unit:
+The HTTP listener provides:
 
-- `deploy/systemd/botparty-streamer.service`
+- `GET /health` for process health and version
+- `GET /metrics` for Prometheus-compatible runtime counters
 
-FFmpeg feed unit:
+Example:
 
-- `deploy/systemd/ffmpeg-h264-feed.service`
+```bash
+curl http://127.0.0.1:9090/health
+curl http://127.0.0.1:9090/metrics
+```
 
-Installation example:
+When `HEALTH_AUTH_TOKEN` is set, send it as a bearer token.
+
+## systemd
+
+Install the binary and unit files:
 
 ```bash
 ./scripts/install-botparty-streamer.sh
-sudo install -m 0644 deploy/systemd/botparty-streamer.service /etc/systemd/system/botparty-streamer.service
-sudo install -m 0644 deploy/systemd/ffmpeg-h264-feed.service /etc/systemd/system/ffmpeg-h264-feed.service
+sudo install -m 0644 deploy/systemd/botparty-streamer.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/ffmpeg-h264-feed.service /etc/systemd/system/
 ```
 
-Example `/etc/default/botparty-streamer`:
+Create `/etc/default/botparty-streamer` from [`.env.example`](.env.example). Create `/etc/default/ffmpeg-h264-feed` with the ffmpeg command:
 
 ```bash
-LK_URL=wss://livekit.example.com
-LK_ROOM=robot-room-1
-LK_IDENTITY=robot-streamer-1
-LK_NAME=Robot Streamer 1
-LK_TRACK_NAME=camera
-INPUT_LISTEN_ADDR=127.0.0.1:5004
-VIDEO_FPS=30
-INPUT_READ_TIMEOUT_MS=500
-FRAME_FLUSH_TIMEOUT_MS=50
-ALLOW_REMOTE_INPUT=false
-FRAME_CHAN_SIZE=4
-MAX_PUBLISH_STALE_MS=250
-AU_MAX_NALUS=64
-AU_MAX_BYTES=2097152
-TOKEN_ENDPOINT=http://127.0.0.1:8088/token
-DEVICE_ID=robot-1
-DEVICE_SECRET=replace-with-strong-secret
-TOKEN_TTL_SECONDS=300
+FFMPEG_CMD='ffmpeg -hide_banner -loglevel warning -f v4l2 -framerate 30 -video_size 1280x720 -i /dev/video0 -an -c:v libx264 -preset veryfast -tune zerolatency -g 60 -bf 0 -f h264 tcp://127.0.0.1:5004'
 ```
 
-Example `/etc/default/ffmpeg-h264-feed`:
-
-```bash
-FFMPEG_CMD='ffmpeg -hide_banner -loglevel warning -f v4l2 -framerate 30 -video_size 1280x720 -i /dev/video0 -an -c:v h264_v4l2m2m -g 60 -bf 0 -f h264 tcp://127.0.0.1:5004'
-```
-
-Enable:
+Then enable both services:
 
 ```bash
 sudo systemctl daemon-reload
@@ -309,49 +191,21 @@ sudo systemctl enable --now botparty-streamer.service
 sudo systemctl enable --now ffmpeg-h264-feed.service
 ```
 
-## Windows Service / macOS LaunchAgent notes
+The supplied units run as the `botparty` user. Create that system account and give it access to the selected camera and hardware encoder devices before starting the services.
 
-- Windows: run the publisher as a service via NSSM or WinSW, ffmpeg as a separate service/task.
-- macOS: create separate LaunchAgent/LaunchDaemon entries for the publisher and ffmpeg; use the same startup order as above.
-
-## Minimal token backend (Node.js)
+## Development
 
 ```bash
-cd examples/token-backend-node
-cp .env.example .env
-npm install
-npm start
+gofmt -w cmd/botparty-streamer
+go vet ./...
+go test ./...
+go build ./...
 ```
 
-Important:
+Source code lives under `cmd/botparty-streamer`. Deployment files, examples and operator scripts stay separate from the application package.
 
-- The example starts fail-closed.
-- Without `TOKEN_ISSUER_BEARER` and without `DEVICE_SECRETS` the process exits intentionally with an error.
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Report vulnerabilities as described in [SECURITY.md](SECURITY.md). Third-party licensing information is covered in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Endpoint:
+## License
 
-- `POST /token`
-- Body: `{"room":"robot-room-1","identity":"robot-streamer-1","name":"Robot Streamer 1","ttlSeconds":300}`
-- Response: `{"token":"..."}`
-
-## Troubleshooting
-
-1. `connect to livekit` fails:
-   - Check `LK_URL`, verify certificates, check token TTL.
-
-2. No video in room:
-   - Confirm ffmpeg is writing to `tcp://127.0.0.1:5004`.
-   - Check publisher log for `ffmpeg connected`.
-
-3. No image immediately after reconnect:
-   - The publisher intentionally waits for the next keyframe to avoid sending stale frames.
-   - Shorten the GOP (e.g. `-g 60`) if recovery is too slow.
-
-4. High latency:
-   - Keep `FRAME_CHAN_SIZE` small.
-   - Do not set `MAX_PUBLISH_STALE_MS` too high.
-   - Use ffmpeg low-latency encoder settings (`-tune zerolatency`, `-bf 0`).
-
-5. Frequent parser errors:
-   - Make sure ffmpeg is producing real Annex-B H.264 (`-f h264`).
-   - Check the encoder/bitstream, especially with exotic hardware pipelines.
+botparty-streamer is available under the [MIT License](LICENSE).

@@ -31,8 +31,8 @@ type Config struct {
 	MetricsStateFile string
 	AllowRemoteInput bool
 
-	HealthAddr string
-	HealthAuthToken string
+	HealthAddr        string
+	HealthAuthToken   string
 	AllowRemoteHealth bool
 
 	StaticToken string
@@ -77,8 +77,8 @@ func LoadConfig() (Config, error) {
 		MetricsStateFile: strings.TrimSpace(os.Getenv("METRICS_STATE_FILE")),
 		AllowRemoteInput: getenvBool("ALLOW_REMOTE_INPUT", false),
 
-		HealthAddr: getenvDefault("HEALTH_ADDR", "127.0.0.1:9090"),
-		HealthAuthToken: strings.TrimSpace(os.Getenv("HEALTH_AUTH_TOKEN")),
+		HealthAddr:        getenvDefault("HEALTH_ADDR", "127.0.0.1:9090"),
+		HealthAuthToken:   strings.TrimSpace(os.Getenv("HEALTH_AUTH_TOKEN")),
 		AllowRemoteHealth: getenvBool("ALLOW_REMOTE_HEALTH", false),
 
 		StaticToken:     strings.TrimSpace(os.Getenv("LK_TOKEN")),
