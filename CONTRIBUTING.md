@@ -6,7 +6,7 @@ Bug reports, fixes and focused improvements are welcome.
 
 Requirements:
 
-- Go 1.24 or newer
+- Go 1.26 or newer
 - ffmpeg for an end-to-end stream test
 
 Before opening a pull request, run:

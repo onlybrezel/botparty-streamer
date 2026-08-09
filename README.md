@@ -20,7 +20,7 @@ The input listener accepts one ffmpeg connection at a time. It binds to `127.0.0
 
 ## Requirements
 
-- Go 1.24 or newer when building from source
+- Go 1.26 or newer when building from source
 - ffmpeg with an H.264 encoder
 - A LiveKit server and a token with permission to join and publish
 
