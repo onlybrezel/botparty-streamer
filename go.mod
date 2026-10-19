@@ -3,7 +3,7 @@ module github.com/onlybrezel/botparty-streamer
 go 1.26.8
 
 require (
-	github.com/livekit/protocol v1.51.1-0.20260910121219-271d9cde3897
+	github.com/livekit/protocol v1.52.1
 	github.com/livekit/server-sdk-go/v2 v2.19.0
 	github.com/pion/webrtc/v4 v4.2.23
 )
@@ -31,16 +31,13 @@ require (
 	github.com/jxskiss/base62 v1.1.0 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
-	github.com/lithammer/shortuuid/v4 v4.2.0 // indirect
+	github.com/lithammer/shortuuid/v4 v4.3.0 // indirect
 	github.com/livekit/mageutil v0.0.0-20250511045019-0f1ff63f7731 // indirect
 	github.com/livekit/mediatransportutil v0.0.0-20260821083140-f234b534b095 // indirect
-	github.com/livekit/psrpc v0.7.6 // indirect
+	github.com/livekit/psrpc v0.8.0 // indirect
 	github.com/magefile/mage v1.17.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/nats-io/nats.go v1.52.0 // indirect
-	github.com/nats-io/nkeys v0.4.16 // indirect
-	github.com/nats-io/nuid v1.0.1 // indirect
-	github.com/petermattis/goid v0.0.0-20260725062400-500c67a39b75 // indirect
+	github.com/petermattis/goid v0.0.0-20260820044319-269ab09b5261 // indirect
 	github.com/pion/datachannel v1.6.3 // indirect
 	github.com/pion/dtls/v3 v3.1.10 // indirect
 	github.com/pion/ice/v4 v4.4.7 // indirect
@@ -57,11 +54,10 @@ require (
 	github.com/pion/transport/v5 v5.1.1 // indirect
 	github.com/pion/turn/v5 v5.1.2 // indirect
 	github.com/prometheus/client_golang v1.24.1 // indirect
-	github.com/prometheus/client_model v0.6.2 // indirect
+	github.com/prometheus/client_model v0.6.3 // indirect
 	github.com/prometheus/common v0.70.1 // indirect
 	github.com/prometheus/procfs v0.21.1 // indirect
 	github.com/puzpuzpuz/xsync/v4 v4.5.0 // indirect
-	github.com/redis/go-redis/v9 v9.22.0 // indirect
 	github.com/twitchtv/twirp v8.1.3+incompatible // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
