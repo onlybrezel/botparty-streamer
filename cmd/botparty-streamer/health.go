@@ -85,7 +85,7 @@ func runHealthServer(ctx context.Context, addr string, authToken string, stats *
 
 		startedAt := time.Now()
 		mux.ServeHTTP(w, r)
-		logger.Printf("health request path=%s method=%s duration=%s remote=%s", r.URL.Path, r.Method, time.Since(startedAt), r.RemoteAddr)
+		logger.Printf("health request path=%q method=%q duration=%s remote=%q", r.URL.Path, r.Method, time.Since(startedAt), r.RemoteAddr)
 	})
 
 	srv := &http.Server{
